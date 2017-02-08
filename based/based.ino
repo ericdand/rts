@@ -65,6 +65,7 @@ int light_level;
 int tjs_xpos, tjs_ypos, tjs_button;
 // roomba joystick
 int rjs_xpos, rjs_ypos, rjs_button;
+
 // bluetooth send queue
 uint8_t bt_tx_n = 0;
 uint8_t bt_tx_q[BT_Q_SIZE];
