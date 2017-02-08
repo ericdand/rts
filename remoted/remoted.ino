@@ -51,8 +51,8 @@ void read_bluetooth() {
 
 void write_bluetooth() {
   digitalWrite(3, HIGH);
-  while(bytes_to_send-- > 0) {
-    Serial1.write(tx_buf[bytes_to_send]);
+  while(bytes_to_send > 0) {
+    Serial1.write(tx_buf[--bytes_to_send]);
   }
  digitalWrite(3, LOW);
 }
