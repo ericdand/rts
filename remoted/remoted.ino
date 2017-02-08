@@ -1,4 +1,5 @@
 #include "scheduler.h"
+#include "bluetooth.h"
 
 // PIN DEFINITIONS
 //////////////////
@@ -11,6 +12,10 @@
 #define R_DRIVE 34
 #define R_SERIAL 2
 
+
+// GLOBAL DATA STRUCTURES
+/////////////////////////
+
 /* Notes:
  *  The Mega 2560 has a 64-byte software serial buffer.
  *  You can check if it overflowed with Serial.overflow().
@@ -21,6 +26,13 @@ uint8_t rx_buf[BUF_SIZE];
 uint8_t bytes_available = 0;
 uint8_t tx_buf[BUF_SIZE];
 uint8_t bytes_to_send = 0;
+
+// Roomba object
+Roomba roomba(R_SERIAL, R_DRIVE);
+
+
+// HELPER FUNCTIONS
+///////////////////
 
 void read_bluetooth() {
  digitalWrite(2, HIGH);
@@ -37,6 +49,29 @@ void write_bluetooth() {
   }
  digitalWrite(3, LOW);
 }
+
+
+// TTA-SCHEDULED TASKS
+//////////////////////
+
+void laser_task(void)
+{
+  return;
+}
+
+void turret_task(void)
+{
+  return;
+}
+
+void roomba_task(void)
+{
+  return;
+}
+
+
+// ARDUINO FUNCTIONS
+////////////////////
 
 void setup() {
   // Serial zero is used (sparingly!) for debug output to the PC.
