@@ -7,11 +7,15 @@
 // BLUETOOTH COMMS MACROS 
 ///////////////////////// 
 
+// Note: The command 0xFFFF (device 3 with command 63) is reserved.
+
 // device IDs
 #define ROOMBA 1
 #define TURRET 2
 
 // Roomba commands
+// NB: The numbering of these commands matters!
+// We make assumptions about it in code. Don't change these lightly.
 #define R_FORWARD 0
 #define R_BACKWARD 1
 #define R_LEFT 2

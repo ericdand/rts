@@ -13,7 +13,6 @@
 #define R_DRIVE 34
 #define R_SERIAL 2
 
-
 // GLOBAL DATA STRUCTURES
 /////////////////////////
 
@@ -22,11 +21,10 @@
  *  You can check if it overflowed with Serial.overflow().
  */
 
-#define BUF_SIZE 16
+#define BUF_SIZE 64
 uint8_t rx_buf[BUF_SIZE];
 uint8_t bytes_available = 0;
-uint8_t tx_buf[BUF_SIZE];
-uint8_t bytes_to_send = 0;
+uint8_t expecting_data_byte = 0xFFFF;
 
 // Roomba object
 Roomba roomba(R_SERIAL, R_DRIVE);
@@ -38,28 +36,73 @@ Servo pservo; // pan
 
 // TODO globals for commands from bt
 
-// HELPER FUNCTIONS
-///////////////////
-
-void read_bluetooth() {
- digitalWrite(2, HIGH);
-  while(Serial1.available() && bytes_available < BUF_SIZE) {
-    rx_buf[bytes_available++] = Serial1.read();
-  }
- digitalWrite(2, LOW);
-}
-
-void write_bluetooth() {
-  digitalWrite(3, HIGH);
-  while(bytes_to_send > 0) {
-    Serial1.write(tx_buf[--bytes_to_send]);
-  }
- digitalWrite(3, LOW);
-}
-
 
 // TTA-SCHEDULED TASKS
 //////////////////////
+
+void bluetooth_task(void)
+{
+  digitalWrite(2, HIGH);
+
+  // Send stuff.
+  if (bytes_to_send > 0) {
+    Serial1.write(tx_buf, bytes_to_send);
+    bytes_to_send = 0;
+  }
+
+  // Receive stuff.
+  while(Serial1.available()) {
+    uint8_t b, device, cmd;
+
+    b = Serial1.read();
+
+    // If we happened to be reading between a command and its data, then we
+    // might still be waiting for the data. expecting_data_byte contains the
+    // command which was expecting the byte.
+    if (expecting_data_byte != 0xFFFF) {
+      device = expecting_data_byte >> 6;
+      cmd = expecting_data_byte & 0x3F;
+      switch(device) {
+      case ROOMBA:
+        r_cmd = cmd;
+        r_data = b;
+        break;
+      case TURRET:
+        t_cmd = cmd;
+        t_data = b;
+        break;
+      }
+      expecting_data_byte = 0xFFFF;
+      continue;
+    }
+
+    device = b >> 6;
+    cmd = b & 0x3F;
+    switch(device) {
+    case ROOMBA:
+      r_cmd = cmd;
+      // The first 8 commands are movement commands, the last
+      // of which is the backward-right command.
+      if (cmd <= R_BACKWARD_RIGHT) {
+        // All movement commands have an additional data byte.
+        int data = Serial1.read();
+        if (data == -1) {
+          expecting_data_byte = b;
+        } else {
+          r_data = (uint8_t)data;
+        }
+      break;
+    case TURRET:
+      // turret stuff
+      break;
+    default:
+      // TODO: complain loudly. sing a song!
+      break;
+    }
+  }
+
+  digitalWrite(2, LOW);
+}
 
 void laser_task(void)
 {
@@ -137,7 +180,7 @@ void roomba_task(void)
 
 void setup() {
   // Serial zero is used (sparingly!) for debug output to the PC.
-	Serial.begin(9600);
+  Serial.begin(9600);
   // The Bluetooth module should be connected to Serial1.
   Serial1.begin(9600);
   while(!Serial || !Serial1); // Wait for serial ports to be ready.
@@ -145,7 +188,7 @@ void setup() {
   // Set up pins.
   pinMode(LASER, OUTPUT);
   // These pins are used for monitoring using the logic analyzer.
-	pinMode(2, OUTPUT);
+  pinMode(2, OUTPUT);
   pinMode(3, OUTPUT);
   pinMode(4, OUTPUT);
 
@@ -158,12 +201,11 @@ void setup() {
   roomba.init();
   r_initialized = true;
 
-	Scheduler_Init();
+  Scheduler_Init();
 
-	// General form for starting a task:
-	// Scheduler_StartTask(offset, period, function_pointer);
-  Scheduler_StartTask(30, 100, read_bluetooth);
-  Scheduler_StartTask(60, 100, write_bluetooth);
+  // General form for starting a task:
+  // Scheduler_StartTask(offset, period, function_pointer);
+  Scheduler_StartTask(30, 100, bluetooth_task);
   Scheduler_StartTask(0, 0, laser_task);
   Scheduler_StartTask(0, 0, turret_task);
   Scheduler_StartTask(0, 0, roomba_task);
