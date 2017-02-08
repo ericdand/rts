@@ -1,5 +1,16 @@
 #include "scheduler.h"
 
+// PIN DEFINITIONS
+//////////////////
+
+#define LASER 31
+#define PSERVO 32 // pan servo
+#define TSERVO 33 // tilt servo
+
+// Roomba drive pin and serial connection
+#define R_DRIVE 34
+#define R_SERIAL 2
+
 /* Notes:
  *  The Mega 2560 has a 64-byte software serial buffer.
  *  You can check if it overflowed with Serial.overflow().
@@ -20,7 +31,7 @@ void read_bluetooth() {
 }
 
 void write_bluetooth() {
-  digitalWrite(3, LOW);
+  digitalWrite(3, HIGH);
   while(bytes_to_send-- > 0) {
     Serial1.write(tx_buf[bytes_to_send]);
   }
@@ -55,14 +66,3 @@ void loop() {
 		digitalWrite(4, LOW);
 	}
 }
-
-int main() {
-	init();
-	setup();
-
-	for(;;) {
-		loop();
-	}
-	return 0;
-}
-
