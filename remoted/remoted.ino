@@ -1,5 +1,6 @@
 #include "scheduler.h"
 #include "bluetooth.h"
+#include <Servo.h>
 
 // PIN DEFINITIONS
 //////////////////
@@ -31,6 +32,11 @@ uint8_t bytes_to_send = 0;
 Roomba roomba(R_SERIAL, R_DRIVE);
 bool r_initialized = false;
 
+// Servo objects
+Servo tservo; // tilt
+Servo pservo; // pan
+
+// TODO globals for commands from bt
 
 // HELPER FUNCTIONS
 ///////////////////
@@ -57,16 +63,26 @@ void write_bluetooth() {
 
 void laser_task(void)
 {
-  return;
+  if(laser_cmd == 1)
+  {
+    digitalWrite(LASER, HIGH);
+  }
+  else if(laser_cmd == 0)
+  {
+    digitalWrite(LASER, LOW);
+  }
 }
 
 void turret_task(void)
 {
-  return;
+  pservo.writeMicroseconds(pan_pos);
+  tservo.writeMicroseconds(tilt_pos);
 }
 
 void roomba_task(void)
 {
+  // TODO can this be in here? might cause timing violation
+  // or unnecessarily long period (due to rarity of init)
   if(!initialized) {
     roomba.init();
     initialized = true;
@@ -78,6 +94,7 @@ void roomba_task(void)
   // scale to roomba values
   // roomba vel [-2000, 2000]
   // roomba rad [-500, 500]
+  // TODO right place for this processing?
   uint16_t r_vel = r_data >> 4;
   uint16_t r_rad = r_data & 0xF;
   r_vel = r_vel * 133; // approx 2000/15
@@ -125,10 +142,17 @@ void setup() {
   Serial1.begin(9600);
   while(!Serial || !Serial1); // Wait for serial ports to be ready.
 
+  // Set up pins.
+  pinMode(LASER, OUTPUT);
   // These pins are used for monitoring using the logic analyzer.
 	pinMode(2, OUTPUT);
   pinMode(3, OUTPUT);
   pinMode(4, OUTPUT);
+
+  // Configure servos.
+  // Between 1000 and 2000 nanoseconds pulse.
+  pservo.attach(PSERVO, 1000, 2000);
+  tservo.attach(TSERVO, 1000, 2000);
 
   // Initialize roomba. This opens Serial<R_SERIAL>.
   roomba.init();
@@ -140,6 +164,9 @@ void setup() {
 	// Scheduler_StartTask(offset, period, function_pointer);
   Scheduler_StartTask(30, 100, read_bluetooth);
   Scheduler_StartTask(60, 100, write_bluetooth);
+  Scheduler_StartTask(0, 0, laser_task);
+  Scheduler_StartTask(0, 0, turret_task);
+  Scheduler_StartTask(0, 0, roomba_task);
 }
 
 void loop() {
