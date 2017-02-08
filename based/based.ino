@@ -150,6 +150,7 @@ void roomba_task(void)
 
   // send cmd to remote
   // TODO: I suspect forward and backward are, well, backwards here.
+  // TODO how is the data byte packed? is it even packed consistently?
   if (rjs_xpos > (512 + JS_DEADZONE)) {
     uint8_t right = (rjs_xpos - 512) >> 5;
     if (rjs_ypos > (512 + JS_DEADZONE)) {
