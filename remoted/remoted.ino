@@ -29,6 +29,7 @@ uint8_t bytes_to_send = 0;
 
 // Roomba object
 Roomba roomba(R_SERIAL, R_DRIVE);
+bool r_initialized = false;
 
 
 // HELPER FUNCTIONS
@@ -66,6 +67,50 @@ void turret_task(void)
 
 void roomba_task(void)
 {
+  if(!initialized) {
+    roomba.init();
+    initialized = true;
+  }
+
+  // uint8_t data over bt
+  // vvvvrrrr
+  // split into vel and radius [0, 15]
+  // scale to roomba values
+  // roomba vel [-2000, 2000]
+  // roomba rad [-500, 500]
+  uint16_t r_vel = r_data >> 4;
+  uint16_t r_rad = r_data & 0xF;
+  r_vel = r_vel * 133; // approx 2000/15
+  r_rad = r_rad * 33; // approc 500/15
+  switch(r_cmd) // TODO r_cmd, r_data
+  {
+    case 'R_FORWARD': 
+      roomba.drive(r_vel, 32768);
+      break;
+    case 'R_BACKWARD':
+      roomba.drive(-r_vel, 32768);
+      break;
+    case 'R_RIGHT':
+      roomba.drive(50, -r_rad);
+      break;
+    case 'R_LEFT':
+      roomba.drive(50, r_rad);
+      break;
+    case 'R_FORWARD_RIGHT':
+      roomba.drive(r_vel, -r_rad);
+      break;
+    case 'R_FORWARD_LEFT':
+      roomba.drive(r_vel, r_rad);
+      break;
+    case 'R_BACKWARD_RIGHT':
+      roomba.drive(-r_vel, -r_rad);
+      break;
+    case 'R_BACKWARD_LEFT':
+      roomba.drive(-r_vel, r_rad);
+      break;
+    default:
+      break;
+  }
   return;
 }
 
@@ -84,6 +129,10 @@ void setup() {
 	pinMode(2, OUTPUT);
   pinMode(3, OUTPUT);
   pinMode(4, OUTPUT);
+
+  // Initialize roomba. This opens Serial<R_SERIAL>.
+  roomba.init();
+  r_initialized = true;
 
 	Scheduler_Init();
 
