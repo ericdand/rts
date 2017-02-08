@@ -150,15 +150,19 @@ void roomba_task(void)
 
   // send cmd to remote
   // TODO: I suspect forward and backward are, well, backwards here.
-  // TODO how is the data byte packed? is it even packed consistently?
+  /* How the data packing works here:
+   * Data packets are two bytes long.
+   *   Byte 1: the command. 2-bit device ID followed by a 6-bit command.
+   *   Byte 2: the data, packed as 2 4-bit unsigned integers, representing
+   *           velocity (high bits) and rotation (low bits). */
   if (rjs_xpos > (512 + JS_DEADZONE)) {
     uint8_t right = (rjs_xpos - 512) >> 5;
     if (rjs_ypos > (512 + JS_DEADZONE)) {
       uint8_t forward = (rjs_ypos - 512) >> 5;
-      bt_queue_message(ROOMBA, R_FORWARD_RIGHT, (right << 4) | forward);
+      bt_queue_message(ROOMBA, R_FORWARD_RIGHT, (forward << 4) | right);
     } else if (rjs_ypos < (512 - JS_DEADZONE)) {
       uint8_t backward = (512 - rjs_ypos) >> 5;
-      bt_queue_message(ROOMBA, R_BACKWARD_RIGHT, (right << 4) | backward);
+      bt_queue_message(ROOMBA, R_BACKWARD_RIGHT, (backward << 4) | right);
     } else {
       bt_queue_message(ROOMBA, R_RIGHT, right);
     }
@@ -166,17 +170,17 @@ void roomba_task(void)
     uint8_t left = (512 - rjs_xpos) >> 5;
     if (rjs_ypos > (512 + JS_DEADZONE)) {
       uint8_t forward = (rjs_ypos - 512) >> 5;
-      bt_queue_message(ROOMBA, R_FORWARD_LEFT, (left << 4) | forward);
+      bt_queue_message(ROOMBA, R_FORWARD_LEFT, (forward << 4) | left);
     } else if (rjs_ypos < (512 - JS_DEADZONE)) {
       uint8_t backward = (512 - rjs_ypos) >> 5;
-      bt_queue_message(ROOMBA, R_BACKWARD_LEFT, (left << 4) | backward);
+      bt_queue_message(ROOMBA, R_BACKWARD_LEFT, (backward << 4) | left);
     } else {
       bt_queue_message(ROOMBA, R_LEFT, left);
 	  }
   } else if (rjs_ypos > (512 + JS_DEADZONE)) {
-    bt_queue_message(ROOMBA, R_FORWARD, (rjs_ypos - 512) >> 5);
+    bt_queue_message(ROOMBA, R_FORWARD, (rjs_ypos - 512) >> 1 & 0xF0);
   } else if (rjs_ypos < (512 - JS_DEADZONE)) {
-    bt_queue_message(ROOMBA, R_BACKWARD, (512 - rjs_ypos) >> 5);
+    bt_queue_message(ROOMBA, R_BACKWARD, (512 - rjs_ypos) >> 1 & 0xF0);
   }
   return;
 }
