@@ -29,6 +29,7 @@
 // zero position does not exceed the deadzone, then no command will be sent.
 #define JS_DEADZONE 64
 
+
 // GLOBAL DATA STRUCTURES
 /////////////////////////
 
@@ -45,6 +46,7 @@ uint8_t bt_tx_q[BT_Q_SIZE];
 
 // magic LCD incantation
 LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
+
 
 // HELPER FUNCTIONS
 ///////////////////
@@ -74,6 +76,7 @@ void bt_queue_message(uint8_t device, uint8_t command, uint8_t data)
 	bt_tx_q[bt_tx_n++] = (device << 6) | command;
 	bt_tx_q[bt_tx_n++] = data;
 }
+
 
 // TTA-SCHEDULED TASKS
 //////////////////////
@@ -199,6 +202,10 @@ void idle(uint32_t idle_period)
   // any low-priority tasks? making music?
   delay(idle_period); // don't actually do this
 }
+
+
+// ARDUINO FUNCTIONS
+////////////////////
 
 void setup()
 {
