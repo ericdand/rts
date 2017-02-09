@@ -1,5 +1,6 @@
 #include "scheduler.h"
 #include "bluetooth.h"
+#include "Roomba_Driver.h"
 #include <Servo.h>
 
 // PIN DEFINITIONS
@@ -22,13 +23,15 @@
  */
 
 #define BUF_SIZE 64
-uint8_t rx_buf[BUF_SIZE];
-uint8_t bytes_available = 0;
-uint8_t expecting_data_byte = 0xFFFF;
+uint8_t tx_buf[BUF_SIZE];
+uint8_t bytes_to_send = 0;
+uint8_t expecting_data_byte = 0;
 
 // Roomba object
 Roomba roomba(R_SERIAL, R_DRIVE);
 bool r_initialized = false;
+uint8_t r_cmd = 0;
+uint8_t r_data;
 
 // Servo objects
 Servo tservo; // tilt
@@ -59,27 +62,23 @@ void bluetooth_task(void)
     // If we happened to be reading between a command and its data, then we
     // might still be waiting for the data. expecting_data_byte contains the
     // command which was expecting the byte.
-    if (expecting_data_byte != 0xFFFF) {
+    if (expecting_data_byte) {
       device = expecting_data_byte >> 6;
       cmd = expecting_data_byte & 0x3F;
-      switch(device) {
-      case ROOMBA:
+      if (device == ROOMBA) {
         r_cmd = cmd;
         r_data = b;
-        break;
-      case TURRET:
+      } else if (device == TURRET) {
         t_cmd = cmd;
         t_data = b;
-        break;
       }
-      expecting_data_byte = 0xFFFF;
+      expecting_data_byte = 0;
       continue;
     }
 
     device = b >> 6;
     cmd = b & 0x3F;
-    switch(device) {
-    case ROOMBA:
+    if (device == ROOMBA) {
       r_cmd = cmd;
       // The first 8 commands are movement commands, the last
       // of which is the backward-right command.
@@ -91,13 +90,11 @@ void bluetooth_task(void)
         } else {
           r_data = (uint8_t)data;
         }
-      break;
-    case TURRET:
+      }
+    } else if (device == TURRET) {
       // turret stuff
-      break;
-    default:
+    } else {
       // TODO: complain loudly. sing a song!
-      break;
     }
   }
 
@@ -131,6 +128,8 @@ void roomba_task(void)
     initialized = true;
   }
 
+  if(!r_cmd) return;
+
   // uint8_t data over bt
   // vvvvrrrr
   // split into vel and radius [0, 15]
@@ -144,34 +143,34 @@ void roomba_task(void)
   r_rad = r_rad * 33; // approc 500/15
   switch(r_cmd) // TODO r_cmd, r_data
   {
-    case 'R_FORWARD': 
+    case R_FORWARD: 
       roomba.drive(r_vel, 32768);
       break;
-    case 'R_BACKWARD':
+    case R_BACKWARD:
       roomba.drive(-r_vel, 32768);
       break;
-    case 'R_RIGHT':
+    case R_RIGHT:
       roomba.drive(50, -r_rad);
       break;
-    case 'R_LEFT':
+    case R_LEFT:
       roomba.drive(50, r_rad);
       break;
-    case 'R_FORWARD_RIGHT':
+    case R_FORWARD_RIGHT:
       roomba.drive(r_vel, -r_rad);
       break;
-    case 'R_FORWARD_LEFT':
+    case R_FORWARD_LEFT:
       roomba.drive(r_vel, r_rad);
       break;
-    case 'R_BACKWARD_RIGHT':
+    case R_BACKWARD_RIGHT:
       roomba.drive(-r_vel, -r_rad);
       break;
-    case 'R_BACKWARD_LEFT':
+    case R_BACKWARD_LEFT:
       roomba.drive(-r_vel, r_rad);
       break;
     default:
       break;
   }
-  return;
+  r_cmd = 0;
 }
 
 
