@@ -7,13 +7,15 @@
 // BLUETOOTH COMMS MACROS 
 ///////////////////////// 
 
+// Command 0 is reserved, and represents the absence of a command.
+// NB: As a general rule, command which take a data argument come before those
+// that do not. This helps us to quickly check whether to expect a data packet.
+
 // device IDs
 #define ROOMBA 1
 #define TURRET 2
 
 // Roomba commands
-// NB: The numbering of these commands matters!
-// We make assumptions about it in code. Don't change these lightly.
 #define R_FORWARD 1
 #define R_BACKWARD 2
 #define R_LEFT 3
@@ -24,12 +26,15 @@
 #define R_BACKWARD_RIGHT 8
 
 // turret commands
-#define T_LASER_ON 0
-#define T_LASER_OFF 1
-#define T_PAN_LEFT 2
-#define T_PAN_RIGHT 3
-#define T_TILT_UP 4
-#define T_TILT_DOWN 5
-// TODO: Do we need "pan and tilt" commands?
+#define T_PAN_LEFT 1
+#define T_PAN_RIGHT 2
+#define T_TILT_UP 3
+#define T_TILT_DOWN 4
+#define T_PAN_LEFT_TILT_UP 5
+#define T_PAN_LEFT_TILT_DOWN 6
+#define T_PAN_RIGHT_TILT_UP 7
+#define T_PAN_RIGHT_TILT_DOWN 8
+#define T_LASER_ON 9
+#define T_LASER_OFF 10
 
 #define BT_Q_SIZE 64

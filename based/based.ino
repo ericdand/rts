@@ -86,7 +86,11 @@ void laser_task(void)
   // read button of turret joystick
   tjs_button = digitalRead(TJS_BUTTON);
   // send on/off cmd to remote
-  return;
+  // TODO: Don't just send it every time.
+  if (tjs_button == 1)
+    bt_queue_message(TURRET, T_LASER_OFF);
+  else
+    bt_queue_message(TURRET, T_LASER_ON);
 }
 
 void photocell_task(void)
@@ -137,7 +141,38 @@ void servo_task(void)
   tjs_xpos = analogRead(TJS_X);
   tjs_ypos = analogRead(TJS_Y);
   // send cmd to remote
-  return;
+  /* How the data packing works here:
+   * Data packets are two bytes long.
+   *   Byte 1: the command. 2-bit device ID followed by a 6-bit command.
+   *   Byte 2: the data, packed as 2 4-bit unsigned integers, representing
+   *           pan (high bits) and tilt (low bits). */
+  if (tjs_xpos > (512 + JS_DEADZONE)) {
+    uint8_t right = (tjs_xpos - 512) >> 5;
+    if (tjs_ypos > (512 + JS_DEADZONE)) {
+      uint8_t down = (tjs_ypos - 512) >> 5;
+      bt_queue_message(TURRET, T_PAN_RIGHT_TILT_DOWN, (right << 4) | down);
+    } else if (tjs_ypos < (512 - JS_DEADZONE)) {
+      uint8_t up = (512 - tjs_ypos) >> 5;
+      bt_queue_message(TURRET, T_PAN_RIGHT_TILT_UP, (right << 4) | up);
+    } else {
+      bt_queue_message(TURRET, T_PAN_RIGHT, right);
+    }
+  } else if (tjs_xpos < (512 - JS_DEADZONE)) {
+    uint8_t left = (512 - tjs_xpos) >> 5;
+    if (tjs_ypos > (512 + JS_DEADZONE)) {
+      uint8_t down = (tjs_ypos - 512) >> 5;
+      bt_queue_message(TURRET, T_PAN_LEFT_TILT_DOWN, (left << 4) | down);
+    } else if (tjs_ypos < (512 - JS_DEADZONE)) {
+      uint8_t up = (tjs_ypos - 512) >> 5;
+      bt_queue_message(TURRET, T_PAN_LEFT_TILT_UP, (left << 4) | up);
+    } else {
+      bt_queue_message(TURRET, T_PAN_LEFT, left);
+	  }
+  } else if (tjs_ypos > (512 + JS_DEADZONE)) {
+    bt_queue_message(TURRET, T_TILT_DOWN, (tjs_ypos - 512) >> 5);
+  } else if (tjs_ypos < (512 - JS_DEADZONE)) {
+    bt_queue_message(TURRET, T_TILT_UP, (512 - tjs_ypos) >> 5);
+  }
 }
 
 void roomba_task(void)
@@ -149,7 +184,6 @@ void roomba_task(void)
   rjs_button = digitalRead(RJS_BUTTON);
 
   // send cmd to remote
-  // TODO: I suspect forward and backward are, well, backwards here.
   /* How the data packing works here:
    * Data packets are two bytes long.
    *   Byte 1: the command. 2-bit device ID followed by a 6-bit command.
@@ -158,31 +192,30 @@ void roomba_task(void)
   if (rjs_xpos > (512 + JS_DEADZONE)) {
     uint8_t right = (rjs_xpos - 512) >> 5;
     if (rjs_ypos > (512 + JS_DEADZONE)) {
-      uint8_t forward = (rjs_ypos - 512) >> 5;
-      bt_queue_message(ROOMBA, R_FORWARD_RIGHT, (forward << 4) | right);
-    } else if (rjs_ypos < (512 - JS_DEADZONE)) {
-      uint8_t backward = (512 - rjs_ypos) >> 5;
+      uint8_t backward = (rjs_ypos - 512) >> 5;
       bt_queue_message(ROOMBA, R_BACKWARD_RIGHT, (backward << 4) | right);
+    } else if (rjs_ypos < (512 - JS_DEADZONE)) {
+      uint8_t forward = (512 - rjs_ypos) >> 5;
+      bt_queue_message(ROOMBA, R_FORWARD_RIGHT, (forward << 4) | right);
     } else {
       bt_queue_message(ROOMBA, R_RIGHT, right);
     }
   } else if (rjs_xpos < (512 - JS_DEADZONE)) {
     uint8_t left = (512 - rjs_xpos) >> 5;
     if (rjs_ypos > (512 + JS_DEADZONE)) {
+      uint8_t backward = (rjs_ypos - 512) >> 5;
+      bt_queue_message(ROOMBA, R_BACKWARD_LEFT, (backward << 4) | left);
+    } else if (rjs_ypos < (512 - JS_DEADZONE)) {
       uint8_t forward = (rjs_ypos - 512) >> 5;
       bt_queue_message(ROOMBA, R_FORWARD_LEFT, (forward << 4) | left);
-    } else if (rjs_ypos < (512 - JS_DEADZONE)) {
-      uint8_t backward = (512 - rjs_ypos) >> 5;
-      bt_queue_message(ROOMBA, R_BACKWARD_LEFT, (backward << 4) | left);
     } else {
       bt_queue_message(ROOMBA, R_LEFT, left);
 	  }
   } else if (rjs_ypos > (512 + JS_DEADZONE)) {
-    bt_queue_message(ROOMBA, R_FORWARD, (rjs_ypos - 512) >> 1 & 0xF0);
+    bt_queue_message(ROOMBA, R_BACKWARD, (rjs_ypos - 512) >> 1 & 0xF0);
   } else if (rjs_ypos < (512 - JS_DEADZONE)) {
-    bt_queue_message(ROOMBA, R_BACKWARD, (512 - rjs_ypos) >> 1 & 0xF0);
+    bt_queue_message(ROOMBA, R_FORWARD, (512 - rjs_ypos) >> 1 & 0xF0);
   }
-  return;
 }
 
 void bt_send_task(void)
@@ -192,7 +225,6 @@ void bt_send_task(void)
     Serial1.write(bt_tx_q, bt_tx_n);
     bt_tx_n = 0;
   }
-  return;
 }
 
 void bt_receive_task(void)

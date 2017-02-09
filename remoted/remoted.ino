@@ -1,3 +1,11 @@
+/* remoted.c
+ * 
+ * 8 Feb 2017
+ * team 1
+ *
+ * Remoted station.
+ */
+
 #include "scheduler.h"
 #include "bluetooth.h"
 #include "Roomba_Driver.h"
@@ -36,8 +44,9 @@ uint8_t r_data;
 // Servo objects
 Servo tservo; // tilt
 Servo pservo; // pan
-
-// TODO globals for commands from bt
+uint8_t t_cmd = 0;
+uint8_t t_data;
+uint8_t laser_cmd = 0;
 
 
 // TTA-SCHEDULED TASKS
@@ -58,6 +67,7 @@ void bluetooth_task(void)
     uint8_t b, device, cmd;
 
     b = Serial1.read();
+    Serial.print(b);
 
     // If we happened to be reading between a command and its data, then we
     // might still be waiting for the data. expecting_data_byte contains the
@@ -90,9 +100,24 @@ void bluetooth_task(void)
         } else {
           r_data = (uint8_t)data;
         }
-      }
+      } // else: data-less commands here.
     } else if (device == TURRET) {
-      // turret stuff
+      // T_PAN_RIGHT_TILT_DOWN is the last turret command with data.
+      if (cmd <= T_PAN_RIGHT_TILT_DOWN) {
+        t_cmd = cmd;
+        int data = Serial1.read();
+        if (data == -1) {
+          expecting_data_byte = b;
+        } else {
+          t_data = (uint8_t)data;
+        }
+      } else {
+        if (cmd == T_LASER_ON) {
+          laser_cmd = 1;
+        } else if (cmd = T_LASER_OFF) {
+          laser_cmd = 0;
+        }
+      }
     } else {
       // TODO: complain loudly. sing a song!
     }
@@ -115,17 +140,50 @@ void laser_task(void)
 
 void turret_task(void)
 {
-  pservo.writeMicroseconds(pan_pos);
-  tservo.writeMicroseconds(tilt_pos);
+  if (!t_cmd) return;
+
+  int pan = (t_data >> 4) * 34; // 34 ~= 500/15
+  int tilt = (t_data & 0x0F) * 34;
+  switch(t_cmd) {
+  case T_PAN_LEFT:
+    pservo.writeMicroseconds(1500 - pan);
+    break;
+  case T_PAN_RIGHT:
+    pservo.writeMicroseconds(1500 + pan);
+    break;
+  case T_TILT_UP:
+    tservo.writeMicroseconds(1500 + tilt);
+    break;
+  case T_TILT_DOWN:
+    tservo.writeMicroseconds(1500 - tilt);
+    break;
+  case T_PAN_LEFT_TILT_UP:
+    pservo.writeMicroseconds(1500 - pan);
+    tservo.writeMicroseconds(1500 + tilt);
+    break;
+  case T_PAN_LEFT_TILT_DOWN:
+    pservo.writeMicroseconds(1500 - pan);
+    tservo.writeMicroseconds(1500 - tilt);
+    break;
+  case T_PAN_RIGHT_TILT_UP:
+    pservo.writeMicroseconds(1500 + pan);
+    tservo.writeMicroseconds(1500 + tilt);
+    break;
+  case T_PAN_RIGHT_TILT_DOWN:
+    pservo.writeMicroseconds(1500 + pan);
+    tservo.writeMicroseconds(1500 - tilt);
+    break;
+  }
+  t_cmd = 0;
 }
 
 void roomba_task(void)
 {
   // TODO can this be in here? might cause timing violation
   // or unnecessarily long period (due to rarity of init)
-  if(!initialized) {
+  if(!r_initialized) {
     roomba.init();
-    initialized = true;
+    r_initialized = true;
   }
 
   if(!r_cmd) return;
@@ -136,12 +194,11 @@ void roomba_task(void)
   // scale to roomba values
   // roomba vel [-2000, 2000]
   // roomba rad [-500, 500]
-  // TODO right place for this processing?
   uint16_t r_vel = r_data >> 4;
   uint16_t r_rad = r_data & 0xF;
   r_vel = r_vel * 133; // approx 2000/15
   r_rad = r_rad * 33; // approc 500/15
-  switch(r_cmd) // TODO r_cmd, r_data
+  switch(r_cmd)
   {
     case R_FORWARD: 
       roomba.drive(r_vel, 32768);
