@@ -117,16 +117,16 @@ void lcd_task(void)
   }
   
   // Display turret joystick position.
-  lcd.setCursor(6, 0);
-  lcd.print("tx");
+  lcd.setCursor(5, 1);
+  lcd.print("Tx");
   lcd.print(tjs_xpos);
-  lcd.setCursor(11, 0);
+  lcd.setCursor(11, 1);
   lcd.print("y");
   lcd.print(tjs_ypos);
 
   // Display roomba joystick position.
-  lcd.setCursor(6, 0);
-  lcd.print("rx");
+  lcd.setCursor(5, 0);
+  lcd.print("Rx");
   lcd.print(rjs_xpos);
   lcd.setCursor(11, 0);
   lcd.print("y");
@@ -134,6 +134,10 @@ void lcd_task(void)
   return;
 }
 
+// This task will queue up to two 2-byte commands: 
+// one giving an x displacement for the turret, and one giving 
+// a y displacement. If the joystick is centred, then no command
+// will be sent and the turret will naturally come to a rest.
 void servo_task(void)
 {
   // read turret joystick
@@ -141,40 +145,26 @@ void servo_task(void)
   tjs_xpos = analogRead(TJS_X);
   tjs_ypos = analogRead(TJS_Y);
   // send cmd to remote
-  /* How the data packing works here:
-   * Data packets are two bytes long.
-   *   Byte 1: the command. 2-bit device ID followed by a 6-bit command.
-   *   Byte 2: the data, packed as 2 4-bit unsigned integers, representing
-   *           pan (high bits) and tilt (low bits). */
-  if (tjs_xpos > (512 + JS_DEADZONE)) {
-    uint8_t right = (tjs_xpos - 512) >> 5;
-    if (tjs_ypos > (512 + JS_DEADZONE)) {
-      uint8_t down = (tjs_ypos - 512) >> 5;
-      bt_queue_message(TURRET, T_PAN_RIGHT_TILT_DOWN, (right << 4) | down);
-    } else if (tjs_ypos < (512 - JS_DEADZONE)) {
-      uint8_t up = (512 - tjs_ypos) >> 5;
-      bt_queue_message(TURRET, T_PAN_RIGHT_TILT_UP, (right << 4) | up);
-    } else {
-      bt_queue_message(TURRET, T_PAN_RIGHT, right);
+  if (tjs_xpos > (512 + JS_DEADZONE) ||
+      tjs_xpos < (512 - JS_DEADZONE)) {
+    int pan = map(tjs_xpos, 0, 1024, -128, 128);
+    if (pan < 0) {
+      pan = -pan + 0x7F;
     }
-  } else if (tjs_xpos < (512 - JS_DEADZONE)) {
-    uint8_t left = (512 - tjs_xpos) >> 5;
-    if (tjs_ypos > (512 + JS_DEADZONE)) {
-      uint8_t down = (tjs_ypos - 512) >> 5;
-      bt_queue_message(TURRET, T_PAN_LEFT_TILT_DOWN, (left << 4) | down);
-    } else if (tjs_ypos < (512 - JS_DEADZONE)) {
-      uint8_t up = (tjs_ypos - 512) >> 5;
-      bt_queue_message(TURRET, T_PAN_LEFT_TILT_UP, (left << 4) | up);
-    } else {
-      bt_queue_message(TURRET, T_PAN_LEFT, left);
-	  }
-  } else if (tjs_ypos > (512 + JS_DEADZONE)) {
-    bt_queue_message(TURRET, T_TILT_DOWN, (tjs_ypos - 512) >> 5);
-  } else if (tjs_ypos < (512 - JS_DEADZONE)) {
-    bt_queue_message(TURRET, T_TILT_UP, (512 - tjs_ypos) >> 5);
+    bt_queue_message(TURRET, T_PAN, pan);
+	}
+  if (tjs_ypos > (512 + JS_DEADZONE) ||
+      tjs_ypos < (512 - JS_DEADZONE)) {
+    int tilt = map(tjs_ypos, 0 , 1024, -128, 128);
+    if (tilt < 0) {
+      tilt = -tilt + 0x7F;
+    }
+    bt_queue_message(TURRET, T_TILT, tilt);
   }
 }
 
+// This task will send either a velocity and turning angle for 
+// the Roomba, both [-128, 127], or it will send the stop command.
 void roomba_task(void)
 {
   // read roomba joystick
@@ -182,39 +172,20 @@ void roomba_task(void)
   rjs_xpos = analogRead(RJS_X);
   rjs_ypos = analogRead(RJS_Y);
   rjs_button = digitalRead(RJS_BUTTON);
+  int8_t x = (rjs_xpos - 512) >> 2,
+         y = (rjs_ypos - 512) >> 2;
 
   // send cmd to remote
-  /* How the data packing works here:
-   * Data packets are two bytes long.
-   *   Byte 1: the command. 2-bit device ID followed by a 6-bit command.
-   *   Byte 2: the data, packed as 2 4-bit unsigned integers, representing
-   *           velocity (high bits) and rotation (low bits). */
-  if (rjs_xpos > (512 + JS_DEADZONE)) {
-    uint8_t right = (rjs_xpos - 512) >> 5;
-    if (rjs_ypos > (512 + JS_DEADZONE)) {
-      uint8_t backward = (rjs_ypos - 512) >> 5;
-      bt_queue_message(ROOMBA, R_BACKWARD_RIGHT, (backward << 4) | right);
-    } else if (rjs_ypos < (512 - JS_DEADZONE)) {
-      uint8_t forward = (512 - rjs_ypos) >> 5;
-      bt_queue_message(ROOMBA, R_FORWARD_RIGHT, (forward << 4) | right);
-    } else {
-      bt_queue_message(ROOMBA, R_RIGHT, right);
-    }
-  } else if (rjs_xpos < (512 - JS_DEADZONE)) {
-    uint8_t left = (512 - rjs_xpos) >> 5;
-    if (rjs_ypos > (512 + JS_DEADZONE)) {
-      uint8_t backward = (rjs_ypos - 512) >> 5;
-      bt_queue_message(ROOMBA, R_BACKWARD_LEFT, (backward << 4) | left);
-    } else if (rjs_ypos < (512 - JS_DEADZONE)) {
-      uint8_t forward = (rjs_ypos - 512) >> 5;
-      bt_queue_message(ROOMBA, R_FORWARD_LEFT, (forward << 4) | left);
-    } else {
-      bt_queue_message(ROOMBA, R_LEFT, left);
-	  }
-  } else if (rjs_ypos > (512 + JS_DEADZONE)) {
-    bt_queue_message(ROOMBA, R_BACKWARD, (rjs_ypos - 512) >> 1 & 0xF0);
-  } else if (rjs_ypos < (512 - JS_DEADZONE)) {
-    bt_queue_message(ROOMBA, R_FORWARD, (512 - rjs_ypos) >> 1 & 0xF0);
+  if (rjs_xpos > (512 + JS_DEADZONE) || 
+      rjs_xpos < (512 - JS_DEADZONE) || 
+      rjs_ypos > (512 + JS_DEADZONE) ||
+      rjs_ypos < (512 - JS_DEADZONE)) {
+    bt_queue_message(ROOMBA, R_VEL, y);
+    bt_queue_message(ROOMBA, R_ROT, x);
+  }
+
+  if (x == 0 && y == 0) {
+    bt_queue_message(ROOMBA, R_STOP);
   }
 }
 
@@ -249,8 +220,9 @@ void setup()
   lcd.begin(16, 2);
   pinMode(30, INPUT_PULLUP);
   pinMode(31, INPUT_PULLUP);
+  Serial.begin(9600);
   Serial1.begin(9600); // Bluetooth
-  while (!Serial1); // wait for Serial1 to be ready
+  while (!Serial || !Serial1); // wait for Serial to be ready
   
   Scheduler_Init();
 
@@ -259,8 +231,8 @@ void setup()
   Scheduler_StartTask(40, 100, lcd_task);
   Scheduler_StartTask(50, 100, servo_task);
   Scheduler_StartTask(60, 100, roomba_task);
-  Scheduler_StartTask(5, 50, bt_send_task);
-  Scheduler_StartTask(15, 50, bt_receive_task);
+  Scheduler_StartTask(70, 100, bt_send_task);
+  Scheduler_StartTask(80, 100, bt_receive_task);
 }
 
 void loop()

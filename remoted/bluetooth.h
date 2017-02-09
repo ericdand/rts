@@ -16,25 +16,18 @@
 #define TURRET 2
 
 // Roomba commands
-#define R_FORWARD 1
-#define R_BACKWARD 2
-#define R_LEFT 3
-#define R_RIGHT 4
-#define R_FORWARD_LEFT 5
-#define R_FORWARD_RIGHT 6
-#define R_BACKWARD_LEFT 7
-#define R_BACKWARD_RIGHT 8
+// Commands that are followed by a data byte
+#define R_VEL 1
+#define R_ROT (1 << 1)
+// Simple commands
+#define R_STOP (1 << 5)
 
 // turret commands
-#define T_PAN_LEFT 1
-#define T_PAN_RIGHT 2
-#define T_TILT_UP 3
-#define T_TILT_DOWN 4
-#define T_PAN_LEFT_TILT_UP 5
-#define T_PAN_LEFT_TILT_DOWN 6
-#define T_PAN_RIGHT_TILT_UP 7
-#define T_PAN_RIGHT_TILT_DOWN 8
-#define T_LASER_ON 9
-#define T_LASER_OFF 10
+// Data commands
+#define T_PAN 1
+#define T_TILT (1 << 1)
+// Simple commands
+#define T_LASER_ON (1 << 5)
+#define T_LASER_OFF (1 << 6)
 
 #define BT_Q_SIZE 64
