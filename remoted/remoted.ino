@@ -54,40 +54,34 @@ int8_t t_tilt_data = 0;
 ///////////////////
 
 boolean cmd_takes_data(uint8_t b) {
-  return ((b & 0x3F) < (1 << 5));
+  // Commands under 32 take data, 32 and over do not.
+  return ((b & 0x3F) < 32);
 }
 
 void handle_data_cmd(uint8_t device, uint8_t cmd, uint8_t data) {
+  int signed_data = (data & 0x80) ? (int)data - 256 : data;
   if (device == ROOMBA) {
-        if (cmd == R_VEL) {
-          if (data & 0x80) r_vel_data = -(data - 0x7F);
-          else r_vel_data = data;
-        } else if (cmd == R_ROT) {
-          if (data & 0x80) r_rad_data = -(data - 0x7F);
-          else r_rad_data = data;
-        } else if (cmd == R_STOP) {
-          r_stop = true;
-        } else {
-          // TODO: Report unexpected command.
-        }
+    if (cmd == R_VEL) {
+      r_vel_data = (int8_t)signed_data;
+    } else if (cmd == R_ROT) {
+      r_rad_data = (int8_t)signed_data;
+    } else if (cmd == R_STOP) {
+      r_stop = true;
+    } else {
+      // TODO: Report unexpected command.
+    }
   } else if (device == TURRET) {
-        if (cmd == T_PAN) {
-          if (data & 0x80) t_pan_data = -(data - 0x7F);
-          else t_pan_data = data;
-          Serial.write("T_PAN ");
-          Serial.println(t_pan_data); // DEBUG
-        } else if (cmd == T_TILT) {
-          if (data & 0x80) t_tilt_data = -(data - 0x7F);
-          else t_tilt_data = data;
-          Serial.write("T_TILT ");
-          Serial.println(t_tilt_data); // DEBUG
-        } else if (cmd == T_LASER_ON) {
-          digitalWrite(LASER, HIGH);
-        } else if (cmd == T_LASER_OFF) {
-          digitalWrite(LASER, LOW);
-        } else {
-          // TODO: Report unexpected command.
-        }
+    if (cmd == T_PAN) {
+      t_pan_data = (int8_t)signed_data;
+    } else if (cmd == T_TILT) {
+      t_tilt_data = (int8_t)signed_data;
+    } else if (cmd == T_LASER_ON) {
+      digitalWrite(LASER, HIGH);
+    } else if (cmd == T_LASER_OFF) {
+      digitalWrite(LASER, LOW);
+    } else {
+      // TODO: Report unexpected command.
+    }
   }
 }
 
@@ -145,22 +139,14 @@ void bluetooth_task(void)
 void turret_task(void)
 {
   int8_t d_pan, d_tilt;
-  d_pan = map((int)t_pan_data*t_pan_data, 0, 0x3F01, 0, 32);
+  d_pan = map((int)t_pan_data*t_pan_data, 0, 0x3F01, 0, 31);
   if (t_pan_data < 0) {
     d_pan = -d_pan;
   }
-  if (d_pan) {
-    Serial.write("Pan by "); // DEBUG
-    Serial.println(d_pan);
-  }
   
-  d_tilt = map((int)t_tilt_data*t_tilt_data, 0, 0x3F01, 0, 32);
+  d_tilt = map((int)t_tilt_data*t_tilt_data, 0, 0x3F01, 0, 31);
   if (t_tilt_data < 0) {
     d_tilt = -d_tilt;
-  }
-  if (d_tilt) {
-    Serial.write("Tilt by "); // DEBUG
-    Serial.println(d_tilt);
   }
   
   if (d_pan) {
@@ -192,10 +178,10 @@ void roomba_task(void)
   // scale to roomba values
   // roomba rad [-2000, 2000]
   // roomba vel [-500, 500]
-  int16_t r_vel = r_vel_data << 4;
+  int16_t r_vel = (int)r_vel_data << 4;
   if (r_vel < -2000) r_vel = -2000;
   else if (r_vel > 2000) r_vel = 2000;
-  int16_t r_rad = r_rad_data << 2;
+  int16_t r_rad = (int)r_rad_data << 2;
   if (r_rad < -500) r_rad = -500;
   else if (r_rad > 500) r_rad = 500;
 

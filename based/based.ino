@@ -27,7 +27,7 @@
 
 // Size of "deadzone" in the middle of the joystick. If the difference from the
 // zero position does not exceed the deadzone, then no command will be sent.
-#define JS_DEADZONE 64
+#define JS_DEADZONE 48
 
 
 // GLOBAL DATA STRUCTURES
@@ -87,10 +87,11 @@ void laser_task(void)
   tjs_button = digitalRead(TJS_BUTTON);
   // send on/off cmd to remote
   // TODO: Don't just send it every time.
-  if (tjs_button == 1)
+  // TODO DEBUG: Disabled for now. Turn it back on later.
+  /*if (tjs_button == 1)
     bt_queue_message(TURRET, T_LASER_OFF);
   else
-    bt_queue_message(TURRET, T_LASER_ON);
+    bt_queue_message(TURRET, T_LASER_ON);*/
 }
 
 void photocell_task(void)
@@ -131,7 +132,6 @@ void lcd_task(void)
   lcd.setCursor(11, 0);
   lcd.print("y");
   lcd.print(rjs_ypos);
-  return;
 }
 
 // This task will queue up to two 2-byte commands: 
@@ -147,19 +147,19 @@ void servo_task(void)
   // send cmd to remote
   if (tjs_xpos > (512 + JS_DEADZONE) ||
       tjs_xpos < (512 - JS_DEADZONE)) {
-    int pan = map(tjs_xpos, 0, 1024, -128, 128);
+    int pan = map(tjs_xpos, 0, 1023, -128, 127);
     if (pan < 0) {
-      pan = -pan + 0x7F;
+      pan = 256 + pan;
     }
-    bt_queue_message(TURRET, T_PAN, pan);
+    bt_queue_message(TURRET, T_PAN, (uint8_t)pan);
 	}
   if (tjs_ypos > (512 + JS_DEADZONE) ||
       tjs_ypos < (512 - JS_DEADZONE)) {
-    int tilt = map(tjs_ypos, 0 , 1024, -128, 128);
+    int tilt = map(tjs_ypos, 0 , 1023, -128, 127);
     if (tilt < 0) {
-      tilt = -tilt + 0x7F;
+      tilt = 256 + tilt;
     }
-    bt_queue_message(TURRET, T_TILT, tilt);
+    bt_queue_message(TURRET, T_TILT, (uint8_t)tilt);
   }
 }
 
@@ -172,16 +172,22 @@ void roomba_task(void)
   rjs_xpos = analogRead(RJS_X);
   rjs_ypos = analogRead(RJS_Y);
   rjs_button = digitalRead(RJS_BUTTON);
-  int8_t x = (rjs_xpos - 512) >> 2,
-         y = (rjs_ypos - 512) >> 2;
+  int x = map(rjs_xpos, 0, 1023, -128, 127),
+      y = map(rjs_ypos, 0, 1023, -128, 127);
+  if (x < 0) {
+    x = 256 + x;
+  }
+  if (y < 0) {
+    y = 256 + y;
+  }
 
   // send cmd to remote
   if (rjs_xpos > (512 + JS_DEADZONE) || 
       rjs_xpos < (512 - JS_DEADZONE) || 
       rjs_ypos > (512 + JS_DEADZONE) ||
       rjs_ypos < (512 - JS_DEADZONE)) {
-    bt_queue_message(ROOMBA, R_VEL, y);
-    bt_queue_message(ROOMBA, R_ROT, x);
+    bt_queue_message(ROOMBA, R_VEL, (uint8_t)y);
+    bt_queue_message(ROOMBA, R_ROT, (uint8_t)x);
   }
 
   if (x == 0 && y == 0) {
