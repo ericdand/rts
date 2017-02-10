@@ -29,6 +29,13 @@
 // zero position does not exceed the deadzone, then no command will be sent.
 #define JS_DEADZONE 48
 
+// Pins for logic analyzer.
+#define LA_PHOTOCELL 41
+#define LA_LASER 43
+#define LA_LCD 45
+#define LA_SERVO 47
+#define LA_ROOMBA 49
+#define LA_BT_S 51
 
 // GLOBAL DATA STRUCTURES
 /////////////////////////
@@ -83,6 +90,8 @@ void bt_queue_message(uint8_t device, uint8_t command, uint8_t data)
 
 void laser_task(void)
 {
+  digitalWrite(LA_LASER, HIGH);
+  
   // read button of turret joystick
   tjs_button = digitalRead(TJS_BUTTON);
   // send on/off cmd to remote
@@ -92,18 +101,23 @@ void laser_task(void)
     bt_queue_message(TURRET, T_LASER_OFF);
   else
     bt_queue_message(TURRET, T_LASER_ON);*/
+
+  digitalWrite(LA_LASER, LOW);
 }
 
 void photocell_task(void)
 {
+  digitalWrite(LA_PHOTOCELL, HIGH);
   // read photocell
   light_level = analogRead(PHOTOCELL);
   // store for LCD
-  return;
+  digitalWrite(LA_PHOTOCELL, LOW);
 }
 
 void lcd_task(void)
 {
+  digitalWrite(LA_LCD, HIGH);
+  
   // update LCD with photocell, joystick(, servo, laser) status
   lcd.clear();
   lcd.setCursor(0, 0);
@@ -132,6 +146,7 @@ void lcd_task(void)
   lcd.setCursor(11, 0);
   lcd.print("y");
   lcd.print(rjs_ypos);
+  digitalWrite(LA_LCD, LOW);
 }
 
 // This task will queue up to two 2-byte commands: 
@@ -140,6 +155,8 @@ void lcd_task(void)
 // will be sent and the turret will naturally come to a rest.
 void servo_task(void)
 {
+  digitalWrite(LA_SERVO, HIGH);
+  
   // read turret joystick
   // store for LCD
   tjs_xpos = analogRead(TJS_X);
@@ -161,12 +178,16 @@ void servo_task(void)
     }
     bt_queue_message(TURRET, T_TILT, (uint8_t)tilt);
   }
+
+  digitalWrite(LA_SERVO, LOW);
 }
 
 // This task will send either a velocity and turning angle for 
 // the Roomba, both [-128, 127], or it will send the stop command.
 void roomba_task(void)
 {
+  digitalWrite(LA_ROOMBA, HIGH);
+  
   // read roomba joystick
   // store for LCD
   rjs_xpos = analogRead(RJS_X);
@@ -186,28 +207,25 @@ void roomba_task(void)
   // send cmd to remote
   bt_queue_message(ROOMBA, R_VEL, (uint8_t)y);
   bt_queue_message(ROOMBA, R_ROT, (uint8_t)x);
+  digitalWrite(LA_ROOMBA, LOW);
 }
 
 void bt_send_task(void)
 {
+  digitalWrite(LA_BT_S, HIGH);
+  
   // send packets to remote
   if (bt_tx_n > 0) {
     Serial1.write(bt_tx_q, bt_tx_n);
     bt_tx_n = 0;
   }
-}
 
-void bt_receive_task(void)
-{
-  // get packets from remote
-  // pass info on to relevant tasks
-  return;
+  digitalWrite(LA_BT_S, LOW);
 }
 
 void idle(uint32_t idle_period)
 {
-  // any low-priority tasks? making music?
-  delay(idle_period); // don't actually do this
+  return;
 }
 
 
@@ -217,8 +235,16 @@ void idle(uint32_t idle_period)
 void setup()
 {
   lcd.begin(16, 2);
-  pinMode(30, INPUT_PULLUP);
-  pinMode(31, INPUT_PULLUP);
+  pinMode(TJS_BUTTON, INPUT_PULLUP);
+  pinMode(RJS_BUTTON, INPUT_PULLUP);
+
+  pinMode(LA_PHOTOCELL, OUTPUT);
+  pinMode(LA_LASER, OUTPUT);
+  pinMode(LA_LCD, OUTPUT);
+  pinMode(LA_SERVO, OUTPUT);
+  pinMode(LA_ROOMBA, OUTPUT);
+  pinMode(LA_BT_S, OUTPUT);
+  
   Serial.begin(9600);
   Serial1.begin(9600); // Bluetooth
   while (!Serial || !Serial1); // wait for Serial to be ready
@@ -231,7 +257,6 @@ void setup()
   Scheduler_StartTask(50, 100, servo_task);
   Scheduler_StartTask(60, 100, roomba_task);
   Scheduler_StartTask(70, 100, bt_send_task);
-  Scheduler_StartTask(80, 100, bt_receive_task);
 }
 
 void loop()
