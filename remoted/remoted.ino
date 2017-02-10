@@ -66,6 +66,8 @@ void handle_data_cmd(uint8_t device, uint8_t cmd, uint8_t data) {
     } else if (cmd == R_ROT) {
       r_rad_data = (int8_t)signed_data;
     } else if (cmd == R_STOP) {
+      r_vel_data = 0;
+      r_rad_data = 0;
       r_stop = true;
     } else {
       // TODO: Report unexpected command.
@@ -178,22 +180,25 @@ void roomba_task(void)
   // scale to roomba values
   // roomba rad [-2000, 2000]
   // roomba vel [-500, 500]
-  int16_t r_vel = (int)r_vel_data << 4;
-  if (r_vel < -2000) r_vel = -2000;
-  else if (r_vel > 2000) r_vel = 2000;
-  int16_t r_rad = (int)r_rad_data << 2;
-  if (r_rad < -500) r_rad = -500;
-  else if (r_rad > 500) r_rad = 500;
+  Serial.write("R_VEL_DATA ");
+  Serial.println(r_vel_data);
+  Serial.write("R_RAD_DATA ");
+  Serial.println(r_rad_data);
+  int16_t r_vel = (int)r_vel_data << 2;
+  if (r_vel < -500) r_vel = -500;
+  else if (r_vel > 500) r_vel = 500;
+  Serial.write("R_VEL ");
+  Serial.println(r_vel);
+  int16_t r_rad = (int)r_rad_data << 4;
+  if (r_rad < -2000) r_rad = -2000;
+  else if (r_rad > 2000) r_rad = 2000;
+  Serial.write("R_RAD ");
+  Serial.println(r_rad);
 
-  if (r_rad && r_vel) {
-    roomba.drive(r_vel, r_rad);
-  } else if (r_vel && !r_rad) {
+  if (r_vel && !r_rad) {
     roomba.drive(r_vel, 32768);
-  } else if (!r_vel && r_rad) {
-    roomba.drive(50, r_rad);
-  }
-  if (r_stop) {
-    roomba.drive(0, 0);
+  } else {
+    roomba.drive(r_vel, r_rad);
   }
 }
 

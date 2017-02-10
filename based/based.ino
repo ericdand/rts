@@ -174,6 +174,8 @@ void roomba_task(void)
   rjs_button = digitalRead(RJS_BUTTON);
   int x = map(rjs_xpos, 0, 1023, -128, 127),
       y = map(rjs_ypos, 0, 1023, -128, 127);
+  if (x < 4 && x > -4) x = 0;
+  if (y < 4 && y > -4) y = 0;
   if (x < 0) {
     x = 256 + x;
   }
@@ -182,17 +184,8 @@ void roomba_task(void)
   }
 
   // send cmd to remote
-  if (rjs_xpos > (512 + JS_DEADZONE) || 
-      rjs_xpos < (512 - JS_DEADZONE) || 
-      rjs_ypos > (512 + JS_DEADZONE) ||
-      rjs_ypos < (512 - JS_DEADZONE)) {
-    bt_queue_message(ROOMBA, R_VEL, (uint8_t)y);
-    bt_queue_message(ROOMBA, R_ROT, (uint8_t)x);
-  }
-
-  if (x == 0 && y == 0) {
-    bt_queue_message(ROOMBA, R_STOP);
-  }
+  bt_queue_message(ROOMBA, R_VEL, (uint8_t)y);
+  bt_queue_message(ROOMBA, R_ROT, (uint8_t)x);
 }
 
 void bt_send_task(void)
