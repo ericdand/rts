@@ -97,10 +97,10 @@ void laser_task(void)
   // send on/off cmd to remote
   // TODO: Don't just send it every time.
   // TODO DEBUG: Disabled for now. Turn it back on later.
-  /*if (tjs_button == 1)
+  if (tjs_button == 1)
     bt_queue_message(TURRET, T_LASER_OFF);
   else
-    bt_queue_message(TURRET, T_LASER_ON);*/
+    bt_queue_message(TURRET, T_LASER_ON);
 
   digitalWrite(LA_LASER, LOW);
 }
@@ -251,7 +251,7 @@ void setup()
   
   Scheduler_Init();
 
-  Scheduler_StartTask(20, 100, laser_task);
+  Scheduler_StartTask(20, 1000, laser_task);
   Scheduler_StartTask(30, 100, photocell_task);
   Scheduler_StartTask(40, 100, lcd_task);
   Scheduler_StartTask(50, 100, servo_task);
