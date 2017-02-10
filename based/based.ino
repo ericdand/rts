@@ -46,6 +46,8 @@ int light_level;
 int tjs_xpos, tjs_ypos, tjs_button;
 // roomba joystick
 int rjs_xpos, rjs_ypos, rjs_button;
+// laser status
+boolean laser_on = false;
 
 // bluetooth send queue
 uint8_t bt_tx_n = 0;
@@ -94,13 +96,15 @@ void laser_task(void)
   
   // read button of turret joystick
   tjs_button = digitalRead(TJS_BUTTON);
-  // send on/off cmd to remote
-  // TODO: Don't just send it every time.
-  // TODO DEBUG: Disabled for now. Turn it back on later.
-  if (tjs_button == 1)
+  
+  // send on/off cmd to remote if state changed
+  if (tjs_button == 1 && laser_on) {
     bt_queue_message(TURRET, T_LASER_OFF);
-  else
+    laser_on = false;
+  } else if (tjs_button == 0 && !laser_on) {
     bt_queue_message(TURRET, T_LASER_ON);
+    laser_on = true;
+  }
 
   digitalWrite(LA_LASER, LOW);
 }
@@ -251,12 +255,12 @@ void setup()
   
   Scheduler_Init();
 
-  Scheduler_StartTask(20, 1000, laser_task);
+  Scheduler_StartTask(20, 200, laser_task);
   Scheduler_StartTask(30, 100, photocell_task);
-  Scheduler_StartTask(40, 100, lcd_task);
-  Scheduler_StartTask(50, 100, servo_task);
-  Scheduler_StartTask(60, 100, roomba_task);
-  Scheduler_StartTask(70, 100, bt_send_task);
+  Scheduler_StartTask(40, 500, lcd_task);
+  Scheduler_StartTask(60, 100, servo_task);
+  Scheduler_StartTask(70, 100, roomba_task);
+  Scheduler_StartTask(80, 100, bt_send_task);
 }
 
 void loop()

@@ -180,18 +180,18 @@ void roomba_task(void)
   // scale to roomba values
   // roomba rad [-2000, 2000]
   // roomba vel [-500, 500]
-  Serial.write("R_VEL_DATA ");
-  Serial.println(r_vel_data);
   Serial.write("R_RAD_DATA ");
   Serial.println(r_rad_data);
   int16_t r_vel = (int)r_vel_data << 2;
   if (r_vel < -500) r_vel = -500;
   else if (r_vel > 500) r_vel = 500;
-  Serial.write("R_VEL ");
-  Serial.println(r_vel);
-  int16_t r_rad = (int)r_rad_data << 4;
-  if (r_rad < -2000) r_rad = -2000;
-  else if (r_rad > 2000) r_rad = 2000;
+  
+  int16_t r_rad;
+  if (r_rad_data < 0) {
+    r_rad = map(r_rad_data, -128, -1, -1, -2000);
+  } else if (r_rad_data > 0) {
+    r_rad = map(r_rad_data, 1, 127, 2000, 1);
+  } else r_rad = 0;
   Serial.write("R_RAD ");
   Serial.println(r_rad);
 
