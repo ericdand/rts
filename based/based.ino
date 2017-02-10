@@ -35,7 +35,7 @@
 #define LA_LCD 45
 #define LA_SERVO 47
 #define LA_ROOMBA 49
-#define LA_BT_R 51
+#define LA_BT_S 51
 
 // GLOBAL DATA STRUCTURES
 /////////////////////////
@@ -245,7 +245,6 @@ void setup()
   pinMode(LA_LCD, OUTPUT);
   pinMode(LA_SERVO, OUTPUT);
   pinMode(LA_ROOMBA, OUTPUT);
-  pinMode(LA_BT_R, OUTPUT);
   pinMode(LA_BT_S, OUTPUT);
   
   Serial.begin(9600);
