@@ -13,6 +13,7 @@
 *.a
 *.la
 *.lo
+libraries/
 
 # Shared objects (inc. Windows DLLs)
 *.dll
@@ -31,3 +32,6 @@
 # Debug files
 *.dSYM/
 *.su
+
+# Build directory
+build*/
