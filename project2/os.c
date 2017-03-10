@@ -94,30 +94,32 @@ PID Task_Create_System(void (*f)(void), int arg) {
 			tasks[i].sp = tasks[i].stack;
 
 			// Set up the stack.
-			// Code lifted from the example project by Scott and Justin, modified slightly.
+			// Code adapted from the example project by Scott and Justin.
+			// TODO: Verify all these numbers with a paper and pencil.
 			uint8_t* stack_top = tasks[i].stack + (WORKSPACE-1) - (38);
 
 			/* stack_top[0] is the byte above the stack.
+			 * TODO: Verify: is it actually? Or is the top the last used byte?
 			 * stack_top[1] is r0. */
 			stack_top[2] = (uint8_t) 0; /* r1 is the "zero" register. */
 			/* stack_top[32] is r31. */
-			stack_top[33] = (uint8_t) _BV(SREG_I); /* set SREG_I bit in stored SREG. */
-			stack_top[34] = (uint8_t) 0; /* EIND is 0 so we don't suddenly end up in 
-											extended memory. */
+			/* set SREG_I bit in stored SREG. */
+			stack_top[33] = (uint8_t) _BV(SREG_I);
+			stack_top[34] = (uint8_t) 0; /* Set EIND to 0 so we don't suddenly
+											end up in extended memory. */
 
-			/* We are placing the address (16-bit) of the functions
-			 * onto the stack in reverse byte order (least significant first, followed
-			 * by most significant).  This is because the "return" assembly instructions
-			 * (ret and reti) pop addresses off in BIG ENDIAN (most sig. first, least sig.
-			 * second), even though the AT90 is LITTLE ENDIAN machine.
-			 */
-			stack_top[35] = (uint8_t)((uint16_t)(kernel_request_create_args.f) >> 8);
-			stack_top[36] = (uint8_t)(uint16_t)(kernel_request_create_args.f);
+			/* We are placing the address (16-bit) of the functions onto the
+			 * stack in reverse byte order (least significant first, followed
+			 * by most significant). This is because the "return" assembly
+			 * instructions (ret and reti) pop addresses off in BIG ENDIAN
+			 * (most sig. first, least sig. second), even though the ATMega is
+			 * a LITTLE ENDIAN machine. */
+			stack_top[35] = (uint8_t)((uint16_t)(f) >> 8);
+			stack_top[36] = (uint8_t)(uint16_t)(f);
 			stack_top[37] = (uint8_t)((uint16_t)task_terminate >> 8);
 			stack_top[38] = (uint8_t)(uint16_t)task_terminate;
 
-			/*
-			 * Make stack pointer point to cell above stack (the top).
+			/* Make stack pointer point to cell above stack (the top).
 			 * Make room for 32 registers, SREG, EIND, and two return addresses.
 			 */
 			tasks[i].sp = stack_top;
