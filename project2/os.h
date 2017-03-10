@@ -1,4 +1,3 @@
-/* Last modified: MHMC Feb/15/2017 */
 #ifndef _OS_H_  
 #define _OS_H_  
    
