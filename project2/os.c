@@ -1,4 +1,20 @@
+#include <avr/interrupt.h>
+#include <avr/io.h>
+#include <util/atomic.h>
+#include <util/delay.h>
+
 #include "os.h"
+
+#define PRIORITY_HIGHEST 3
+#define PRIORITY_MEDIUM 2
+#define PRIORITY_LOWEST 1
+
+#define LED_BUILTIN (1 << 7)
+
+typedef struct {
+	PID pid;
+	unsigned int priority;
+} task_t;
 
 void OS_Abort(unsigned int error) {
 
@@ -44,3 +60,17 @@ unsigned int Now() {
 	return 0;
 }
 
+int main(void) {
+	// Set PB7 (the LED's port and pin) to output, and then zero the port.
+	DDRB = 0xFF | LED_BUILTIN;
+	PORTB = 0x00;
+
+	// Blink the LED forever.
+	while(1) {
+		_delay_ms(1000);
+		PORTB ^= LED_BUILTIN;
+	}
+
+	// Should never reach here.
+	return 0;
+}
