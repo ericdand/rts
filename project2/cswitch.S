@@ -20,7 +20,7 @@ EIND	= 0x3C
 ; It is important to keep the order of SAVECTX and RESTORECTX  exactly
 ; in reverse. Also, when a new process is created, it is important to 
 ; initialize its "initial" context in the same order as SAVECTX.
-;	
+;
 .macro	SAVECTX
 	push	r0
 	push	r1
@@ -105,8 +105,8 @@ EIND	= 0x3C
         .global CSwitch
         .global Exit_Kernel
         .global Enter_Kernel
-        .extern  KernelSp
-        .extern  CurrentSp
+        .extern KernelSp
+        .extern CurrentSp
 
 /*
   * This function is called by the kernel. Upon entry, we are using
@@ -142,11 +142,10 @@ Exit_Kernel:
         lds  r31, CurrentSp+1
         out  SPL, r30
         out  SPH, r31
-        /*
-          * We are now executing in Cp's stack.
-          * Note: at the bottom of the Cp's context is its return address.
-          */
+        /* We are now executing in CP's stack.
+		 * First we pop all of CP's registers from its stack... */
         RESTORECTX
+		/* ...and now the bottom of CP's stack should be its return address. */
         reti         /* re-enable all global interrupts */
 
 /*

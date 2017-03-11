@@ -6,8 +6,6 @@
 
 #include "os.h"
 
-#define LED_BUILTIN _BV(PB7);
-
 // Task priorities which determine which queue a task is scheduled in.
 #define SYSTEM 3
 #define PERIODIC 2
@@ -21,12 +19,12 @@
 volatile uint8_t *CurrentSp;
 volatile uint8_t *KernelSp;
 
+// TODO: A bunch of this stuff might need the "volatile" keyword.
 typedef struct {
 	PID pid; // A number for this task; also its (index - 1) in "tasks" array.
-	uint8_t stack[WORKSPACE]; // Stack space for this task.
+	uint8_t stack[WORKSPACE]; // Stack space. Includes the task's argument, arg.
 	uint8_t priority; // Priority level (Sys, Per, RR).
 	volatile uint8_t *sp; // Stack pointer.
-	int arg; // The argument passed to Task_Create.
 	TICK period; // These 3 TICK properties are only used by periodic tasks.
 	TICK offset;
 	TICK wcet; // wcet = worst-case execution time.
@@ -43,8 +41,10 @@ static uint8_t sys_q_size = 0,
 			   sys_q_head = 0,
 			   rr_q_size = 0,
 			   rr_q_head = 0;
-// The PID of a periodic task to be run ASAP, if any is ready.
-static PID periodic_task_ready = NULL;
+/* The PID of a periodic task to be run ASAP, if any is ready.
+ * If the scheduler goes to set this field and it is already set,
+ * then that should be considered a timing violation. */
+static volatile PID periodic_task_ready = NULL;
 
 typedef uint8_t CHAN_STATE;
 #define FREE 1
@@ -62,9 +62,87 @@ static chan_t channels[MAXCHAN];
 // If MAXTHREAD is changed to over 16, we will need a bigger mask.
 static uint16_t channel_mask = 0;
 
+/*******
+ * Internal functions
+ *******/
+
 static void task_terminate(void) {
 	// TODO: Clean up the calling task, freeing its resources.
 	// TODO: Do we then return? Or do we call Enter_Kernel?
+}
+
+static void task_create(unsigned int idx, void (*f)(void), int arg) {
+	tasks[idx].pid = (PID)idx+1;
+
+	/* Set up the stack.
+	 * Code adapted from the example project by Scott and Justin.
+	 *
+	 * From the AVR-GCC ABI's "Frame Layout" section:
+	 * "After the function prologue, the frame pointer will point one byte
+	 * below the stack frame, i.e. Y+1 points to the bottom of the stack
+	 * frame."
+	 * So the stack pointer should point just past the data. 
+	 * The ABI specifies "the stack grows downward," from high addresses to low
+	 * addresses, with incoming arguments (in our case, arg) at the very
+	 * bottom, the return address just above that, saved registers above that,
+	 * and then finally stack space.
+	 * We reserve 42 bytes here: 
+	 *  * 2 for "int arg"
+	 *  * 3 for the return address (those tricky "17-bit" addresses)
+	 *  * 3 for the address of the task's first instruction (f)
+	 *  * 34 for saved registers (32 + SREG + EIND)
+	 * This order mirrors that of the ABI, with one exception: the address of
+	 * f is on the stack too. This is because of how cswitch works: it expects
+	 * that the next thing on the stack after the saved registers is the
+	 * "return address" into f. This is only necessary for the task's first
+	 * run; after that, the return addresses will just work out.
+	 * Below that, we put a pointer to task_terminate; when f (actually) 
+	 * returns, it will return into task_terminate and clean itself up.
+	 * NB: In this code, the array indexes may be confusing and seem backwards.
+	 * To be clear: the "top" of the stack is the highest address, the "bottom"
+	 * is the lowest, and the stack grows into even-lower addresses. */
+	uint8_t* stack_bottom = tasks[idx].stack + (WORKSPACE-1) - (43);
+
+	/* Populate the initial stack from bottom to top.
+	 * stack_bottom[0] is the first free byte in the stack.
+	 * Next come all the saved registers.
+	 * stack_bottom[1] is EIND, always set to 0 to start. */
+	stack_bottom[1] = (uint8_t) 0;
+	/* stack_bottom[2] is SREG. We clear it and set the I flag.*/
+	stack_bottom[2] = (uint8_t) _BV(SREG_I);
+	/* stack_bottom[3] is r31. */
+	/*stack_bottom[33] is r1, the zero register. */
+	stack_bottom[33] = (uint8_t) 0;
+	/* stack_bottom[34] is r0. 
+	 * Above that, we place a pointer to f so that the kernel "returns" into f
+	 * after pointing SP at this task's stack pointer. */
+	stack_bottom[35] = (uint8_t) 0;
+	stack_bottom[36] = (uint8_t)((uint16_t)f >> 8);
+	stack_bottom[37] = (uint8_t)(uint16_t)f;
+	/* stack_bottom[35] is the first (highest-order) bit of our 3-byte return
+	 * address, whose value is written to EIND when returning. */
+	stack_bottom[38] = (uint8_t) 0;
+	stack_bottom[39] = (uint8_t)((uint16_t)task_terminate >> 8);
+	stack_bottom[40] = (uint8_t)(uint16_t)task_terminate;
+	/* stack_bottom[38] and [39] hold the argument to f. */
+	stack_bottom[41] = (uint8_t)(arg >> 8);
+	stack_bottom[42] = (uint8_t)arg;
+	
+	tasks[idx].sp = stack_bottom;
+}
+
+/* Assumption with both of these enqueue functions: interrupts are disabled.
+ * If interrupts are not already disabled, then these tasks are dangerous. */
+static void enqueue_system_task(task_t *t) {
+	if (sys_q_size < MAXTHREAD) {
+		system_tasks[(sys_q_head + sys_q_size++) % MAXTHREAD] = t;
+	} // TODO: else error!
+}
+
+static void enqueue_rr_task(task_t *t) {
+	if (rr_q_size < MAXTHREAD) {
+		rr_tasks[(rr_q_head + rr_q_size++) % MAXTHREAD] = t;
+	} // TODO: else error!
 }
 
 /*******
@@ -88,43 +166,11 @@ PID Task_Create_System(void (*f)(void), int arg) {
 	unsigned int i;
 	for(i = 0; i < MAXTHREAD; i++) {
 		if ((task_mask & (1 << i)) == 0) {
+			// Mark this task as used.
 			task_mask |= (1 << i);
-			tasks[i].pid = i + 1;
+
 			tasks[i].priority = SYSTEM;
-			tasks[i].sp = tasks[i].stack;
-
-			// Set up the stack.
-			// Code adapted from the example project by Scott and Justin.
-			// TODO: Verify all these numbers with a paper and pencil.
-			uint8_t* stack_top = tasks[i].stack + (WORKSPACE-1) - (38);
-
-			/* stack_top[0] is the byte above the stack.
-			 * TODO: Verify: is it actually? Or is the top the last used byte?
-			 * stack_top[1] is r0. */
-			stack_top[2] = (uint8_t) 0; /* r1 is the "zero" register. */
-			/* stack_top[32] is r31. */
-			/* set SREG_I bit in stored SREG. */
-			stack_top[33] = (uint8_t) _BV(SREG_I);
-			stack_top[34] = (uint8_t) 0; /* Set EIND to 0 so we don't suddenly
-											end up in extended memory. */
-
-			/* We are placing the address (16-bit) of the functions onto the
-			 * stack in reverse byte order (least significant first, followed
-			 * by most significant). This is because the "return" assembly
-			 * instructions (ret and reti) pop addresses off in BIG ENDIAN
-			 * (most sig. first, least sig. second), even though the ATMega is
-			 * a LITTLE ENDIAN machine. */
-			stack_top[35] = (uint8_t)((uint16_t)(f) >> 8);
-			stack_top[36] = (uint8_t)(uint16_t)(f);
-			stack_top[37] = (uint8_t)((uint16_t)task_terminate >> 8);
-			stack_top[38] = (uint8_t)(uint16_t)task_terminate;
-
-			/* Make stack pointer point to cell above stack (the top).
-			 * Make room for 32 registers, SREG, EIND, and two return addresses.
-			 */
-			tasks[i].sp = stack_top;
-
-			tasks[i].arg = arg;
+			task_create(i, f, arg);
 			break;
 		}
 	}
@@ -140,8 +186,19 @@ PID Task_Create_Period(void (*f)(void), int arg, TICK period, TICK wcet, TICK of
 	return NULL;
 }
 
+/* Task_Next is called by any task which is not the kernel. When called, it
+ * will cause the calling task to be put back in its proper queue, and then
+ * the kernel is invoked to choose a new task. */
 void Task_Next(void) {
-	// TODO: Put the current task back in its proper queue.
+	cli();
+	// Put the current task back in its proper queue.
+	if(current_task->priority == SYSTEM) {
+		enqueue_system_task(current_task);
+	} else if (current_task->priority == ROUND_ROBIN) {
+		enqueue_rr_task(current_task);
+	} else {
+		// TODO: What do if a periodic task calls Task_Next? Probs an error.
+	}
 	Enter_Kernel();
 }
 
@@ -190,17 +247,14 @@ int main(void) {
 	TIMSK3 = _BV(OCIE3A);
 	// Every time the "TIMER3 COMPA" interrupt fires, that's one OS "tick".
 
-	// Set PB7 (the LED's port and pin) to output, and then zero the port.
-	DDRB = LED_BUILTIN;
-	PORTB = 0x00;
-
 	// Schedule the application's main task.
-	Task_Create_System(a_main, NULL);
+	PID a_pid = Task_Create_System(a_main, NULL);
+	enqueue_system_task(&tasks[a_pid-1]);
 
 	// Here we go...
 	while(1) {
 		// Pick a new task.
-		task_t *next_task;
+		task_t *next_task = NULL;
 		if (sys_q_size > 0) {
 			next_task = system_tasks[sys_q_head];
 			sys_q_size -= 1;
@@ -213,6 +267,9 @@ int main(void) {
 			rr_q_size -= 1;
 			rr_q_head = (rr_q_head + 1) % MAXTHREAD;
 		}
+		if (next_task == NULL) continue; // Wait for a task to be scheduled.
+		// TODO: Maybe put the AVR into sleep mode if there's nothing to do?
+
 		CurrentSp = next_task->sp;
 		current_task = next_task;
 
