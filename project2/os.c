@@ -179,6 +179,18 @@ PID Task_Create_System(void (*f)(void), int arg) {
 }
 
 PID Task_Create_RR(void (*f)(void), int arg) {
+	unsigned int i;
+	for(i = 0; i < MAXTHREAD; i++) {
+		if ((task_mask & (1 << i)) == 0) {
+			//Mark task as used.
+			task_mask |= (1 << i);
+
+			tasks[i].priority = ROUND_ROBIN;
+			task_create(i, f, arg);
+			break;
+		}
+	}
+	if (i != MAXTHREAD) return tasks[i].pid;
 	return NULL;
 }
 
@@ -203,7 +215,9 @@ void Task_Next(void) {
 }
 
 int Task_GetArg(void) {
-	return 0;
+	// The task's argument is stored at the very top of their stack.
+	// The argument is 16-bit (two bytes long).
+	return current_task->stack[WORKSPACE - 1 - 2];
 }
 
 CHAN Chan_Init() {
