@@ -69,6 +69,10 @@ static uint16_t channel_mask = 0;
 static void task_terminate(void) {
 	// TODO: Clean up the calling task, freeing its resources.
 	// TODO: Do we then return? Or do we call Enter_Kernel?
+	// Currently, when threads return, they run again, which may mean that they
+	// go through this empty function, then return back to their main function.
+	// It could also mean that the return addresses aren't set up properly on
+	// the stack, and we simply never run this function. Figure it out.
 }
 
 static void task_create(unsigned int idx, void (*f)(void), int arg) {
