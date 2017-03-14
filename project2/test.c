@@ -96,6 +96,7 @@ static void run_test_and_report(BOOL (*test)(void), char *name) {
 
 void a_main(void) {
 	usart_init();
+	_delay_ms(2000); // Wait for the computer to attach a serial monitor.
 	usart_puts("Hello, world!");
 
 	run_test_and_report(test_switching_system_tasks,

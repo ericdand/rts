@@ -11,6 +11,14 @@
 #define PERIODIC 2
 #define ROUND_ROBIN 1
 
+/*******
+ * External functions
+ *******/
+
+/* These two are defined in cswitch.S. They handle context switching. */
+extern void Exit_Kernel();
+extern void Enter_Kernel();
+
 /******
  * OS internal data structures and types
  ******/
@@ -70,7 +78,7 @@ static void task_terminate(void) {
 	// This function is like Task_Next, except we do not put this thread back
 	// on the queue. Instead, we mark it as free, then just enter the kernel.
 	cli();
-	task_mask &= ~(1 << (current_task->PID-1));
+	task_mask &= ~(1 << (uint8_t)(current_task->pid-1));
 	Enter_Kernel();
 }
 
@@ -147,14 +155,6 @@ static void enqueue_rr_task(task_t *t) {
 		rr_tasks[(rr_q_head + rr_q_size++) % MAXTHREAD] = t;
 	} // TODO: else error!
 }
-
-/*******
- * External functions
- *******/
-
-/* These two are defined in cswitch.S. They handle context switching. */
-extern void Exit_Kernel();
-extern void Enter_Kernel();
 
 /*******
  * Interface implementation
