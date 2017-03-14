@@ -67,12 +67,11 @@ static uint16_t channel_mask = 0;
  *******/
 
 static void task_terminate(void) {
-	// TODO: Clean up the calling task, freeing its resources.
-	// TODO: Do we then return? Or do we call Enter_Kernel?
-	// Currently, when threads return, they run again, which may mean that they
-	// go through this empty function, then return back to their main function.
-	// It could also mean that the return addresses aren't set up properly on
-	// the stack, and we simply never run this function. Figure it out.
+	// This function is like Task_Next, except we do not put this thread back
+	// on the queue. Instead, we mark it as free, then just enter the kernel.
+	cli();
+	task_mask &= ~(1 << (current_task->PID-1));
+	Enter_Kernel();
 }
 
 static void task_create(unsigned int idx, void (*f)(void), int arg) {
@@ -163,7 +162,8 @@ extern void Enter_Kernel();
  *******/
 
 void OS_Abort(unsigned int error) {
-
+	// TODO: Jump to main, or (if necessary) the beginning of the
+	// "crt" stuff added by the compiler before the main function.
 }
 
 PID Task_Create_System(void (*f)(void), int arg) {
