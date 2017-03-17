@@ -55,14 +55,16 @@ static void usart_puts(const char *s)
 /* buf may be used by tasks preparing strings to use with debug() */
 static char buf[128];
 static char debug_msg_buf[256];
-void usart_debug(const char* M, const char* filename, const int linenumber, const char* funcname) {
+void usart_debug(const char* M, const char* filename, const int linenumber,
+		const char* funcname) {
 	// To make this work, we need to "suspend" the ticker timer so it's
 	// invisible to the RTOS. Otherwise, timing testing may not work.
 	// NB: There may still be a tiny added cost from just calling this function.
 	// But nowhere near a whole tick.
 	ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
 		uint16_t timer_val = TCNT3;
-		snprintf(debug_msg_buf, 256, "DEBUG %s:%d:%s: %s\n", filename, linenumber, funcname, M);
+		snprintf(debug_msg_buf, 256, "DEBUG %s:%d:%s: %s\n", filename,
+				linenumber, funcname, M);
 		usart_puts(debug_msg_buf);
 		// Clear the interrupt flag, since it's probably been set by now.
 		TIFR3 = _BV(OCF3A);
@@ -100,7 +102,8 @@ typedef struct {
 	volatile TICK ticks_consumed;
 } task_t;
 
-// FIXME: More of this stuff might need the "volatile" keyword.
+/* TODO: I'm pretty sure that most of the stuff that needs the "volatile"
+ * keyword here has it, but it would never hurt to double-check. */
 // Allocate space for each task...
 static task_t tasks[MAXTHREAD];
 // ...and create a wait queue for each priority level.
@@ -243,27 +246,25 @@ static BOOL periodic_tasks_are_scheduled() {
 }
 
 /* From the AVR Libc Reference Manual FAQ:
- * "The canonical way to perform a software reset of non-XMega AVR's is to use
+ * "The canonical way to perform a software reset ... is to use
  * the watchdog timer. Enable the watchdog timer to the shortest timeout
  * setting, then go into an infinite, do-nothing loop. The watchdog will then
  * reset the processor. ... The reason why using the watchdog timer is
  * preferable over jumping to the reset vector, is that when the watchdog
  * resets the AVR, the registers will be reset to their known, default
  * settings. Whereas jumping to the reset vector will leave the registers in
- * their previous state, which is generally not a good idea." 
+ * their previous state, which is generally not a good idea.
  *
- * Furthermore: "CAUTION! On newer AVRs, once the watchdog is enabled, then it
- * stays enabled, even after a reset! For these newer AVRs a function needs to
- * be added to the .init3 section (i.e. during the startup code, before main())
- * to disable the watchdog early enough so it does not continually reset the
- * AVR." 
- * 
+ * "CAUTION! On newer AVRs, once the watchdog is enabled, then it stays
+ * enabled, even after a reset! For these newer AVRs a function needs to be
+ * added to the .init3 section (i.e. during the startup code, before main()) to
+ * disable the watchdog early enough so it does not continually reset the AVR." 
+ *
  * So below we define a function to be run in the .init3 section which disables
  * the watchdog timer again ASAP as the Arduino starts up. */ 
 void disable_watchdog (void) __attribute__ ((naked)) \
 		 __attribute__ ((section (".init3")));
-void disable_watchdog (void)
-{
+void disable_watchdog (void) {
 	MCUSR = 0;
     wdt_disable();
 }

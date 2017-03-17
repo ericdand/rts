@@ -75,10 +75,10 @@ static BOOL test_switching_system_tasks(void) {
 	BOOL success = TRUE;
 	Task_Create_System(task1, 0);
 	Task_Create_System(task2, 0);
+	// This task is a round-robin task.
+	// Call Task_Next just once to allow task1 and task2 to run.
+	Task_Next();
 	for(int i = 0; i < 10; i += 2) {
-		// This task is also a system task.
-		// Use Task_Next to allow task1 and task2 to run.
-		Task_Next();
 		// Make sure the buffer holds the right values.
 		if(buf[i] != 1) success = FALSE;
 		if(buf[i+1] != 2) success = FALSE;
@@ -134,13 +134,7 @@ static void run_test_and_report(BOOL (*test)(void), char *name) {
 	}
 }
 
-void a_main(void) {
-	ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-		usart_init();
-		_delay_ms(1000); // Wait for the computer to attach a serial monitor.
-		usart_puts("Hello, world!\n");
-	}
-
+void test_runner(void) {
 	run_test_and_report(test_switching_system_tasks,
 			"switching system tasks");
 	run_test_and_report(test_switching_periodic_tasks, 
@@ -149,6 +143,22 @@ void a_main(void) {
 			"switching round-robin tasks");
 	run_test_and_report(test_switching_mixed_priority_tasks,
 			"switching mixed-priority tasks");
+}
+
+void a_main(void) {
+	ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+		usart_init();
+		_delay_ms(500); // Wait for the computer to attach a serial monitor.
+		usart_puts("Testing...\n\n");
+	}
+
+	// Create the task runner at a lower priority level so it doesn't get in
+	// the way of running tests.
+	Task_Create_RR(test_runner, 0);
+
+	// When this task returns, the OS will switch to the only remaining one:
+	// test_runner.
+	return;
 
 	// LED-blinking code.
 	// DDRB = LED_BUILTIN;
@@ -158,5 +168,4 @@ void a_main(void) {
 	// 	_delay_ms(100);
 	// 	Task_Next();
 	// }
-	return;
 }
