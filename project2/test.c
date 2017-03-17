@@ -53,8 +53,8 @@ static void usart_puts(const char *s)
 }
 
 /* task1 and task2 are classic "ping-pong" tasks; they are meant to alternate
- * writing 0 and 1 to buf. The can be used to test all 3 kinds of task. 
- * They *should* both run in under one tick. */
+ * writing 1 and 2 to buf. The can be used to test all 3 kinds of task. 
+ * They should both run in well under one tick. */
 static void task1(void) {
 	int i;
 	for(i = 0; i < 5; i++) {
