@@ -159,8 +159,6 @@ static void task_terminate(void) {
 
 static void task_create(unsigned int idx, void (*f)(void), int arg) {
 	tasks[idx].pid = (PID)idx+1;
-	tasks[idx].tick_started = tick;
-	tasks[idx].subtick_started = TCNT3;
 
 	/* Set up the stack.
 	 * Code adapted from the example project by Scott and Justin.
@@ -475,6 +473,8 @@ int main(void) {
 			sleep_mode();
 		}
 
+		next_task->tick_started = tick;
+		next_task->subtick_started = TCNT3;
 		CurrentSp = next_task->sp;
 		current_task = next_task;
 
