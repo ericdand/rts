@@ -5,9 +5,10 @@ MONITOR_PORT = /dev/tty.usbmodem1421
 ARDUINO_DIR   = /Users/eric/Applications/Arduino.app/Contents/Java
 USER_LIB_PATH := $(realpath ../libraries)
 # The default serial monitor used by targets like "monitor" and "test" is
-# screen. Uncomment the following lines to switch it to picocom.
-# MONITOR_CMD		= picocom
-# MONITOR_PARAMS	= -c		# -c enables "local echo".
+# screen. The following lines switch it to picocom at 115200 baud.
+MONITOR_CMD			= picocom
+MONITOR_PARAMS		= -c --omap delbs --imap lfcrlf
+MONITOR_BAUDRATE	= 19200
 include /usr/local/opt/arduino-mk/Arduino.mk
 
 # The test target builds and uploads the code, then connects the serial
