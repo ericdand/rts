@@ -19,6 +19,15 @@
 // PIN_12 is Arduino pin 12; attach a LA to it to help with debugging.
 #define PIN_12 _BV(PB6)
 
+/**********
+ * ON WRITING TESTS
+ *
+ * All tests write integers to the array "buf", then verify their output and
+ * report success. buf is not cleared between tests, but the index buf_n is
+ * zeroed before each test is run. Tests are responsible for ensuring that any
+ * tasks they start have terminated before they return.
+ **********/
+
 // This buffer is scratch space for all tests.
 // buf_n is set to 0 between tests, but buf is not zeroed.
 static volatile int buf[128];
@@ -52,53 +61,125 @@ static void usart_puts(const char *s)
 	}
 }
 
+// wait for n ticks, using _delay_ms.
+static void wait(TICK n) {
+	TICK start = Now();
+	while(Now() - start < n) {
+		_delay_ms(1);
+	}
+}
+
 /* task1 and task2 are classic "ping-pong" tasks; they are meant to alternate
  * writing 1 and 2 to buf. The can be used to test all 3 kinds of task. 
- * They should both run in well under one tick. */
+ * They should both run in well under one tick. They will loop 5 times, exiting
+ * at the end of the 5th loop. */
 static void task1(void) {
 	int i;
-	for(i = 0; i < 5; i++) {
+	for(i = 0; i < 4; i++) {
 		buf[buf_n++] = 1;
 		Task_Next();
 	}
+	buf[buf_n++] = 1;
 }
 
 static void task2(void) {
 	int i;
-	for(i = 0; i < 5; i++) {
+	for(i = 0; i < 4; i++) {
 		buf[buf_n++] = 2;
 		Task_Next();
 	}
+	buf[buf_n++] = 2;
 }
 
 static BOOL test_switching_system_tasks(void) {
 	BOOL success = TRUE;
+	// This task is a round-robin task.
+	// Each of these tasks will take over immediately when scheduled.
 	Task_Create_System(task1, 0);
 	Task_Create_System(task2, 0);
-	// This task is a round-robin task.
-	// Call Task_Next just once to allow task1 and task2 to run.
-	Task_Next();
-	for(int i = 0; i < 10; i += 2) {
+	for(int i = 0; i < 10; i++) {
 		// Make sure the buffer holds the right values.
-		if(buf[i] != 1) success = FALSE;
-		if(buf[i+1] != 2) success = FALSE;
+		if(buf[i] != i/5+1) success = FALSE;
 	}
-	// Call Task_Next one more time to let the tasks terminate.
-	Task_Next();
 	return success;
 }
 
-static BOOL test_switching_periodic_tasks(void) {
+static void print1(void) {
+	for(int i = 0; i < 4; i++) {
+		buf[buf_n++] = 1;
+		Task_Next();
+	}
+	buf[buf_n++] = 1;
+}
 
+static void print2(void) {
+	for(int i = 0; i < 4; i++) {
+		buf[buf_n++] = 2;
+		Task_Next();
+	}
+	buf[buf_n++] = 2;
+}
+
+static BOOL test_switching_periodic_tasks(void) {
+	// No two periodic tasks can be scheduled for the same time. So we set
+	// these to alternate ticks. They should finish with nearly 3ms to spare.
+	Task_Create_Period(print1, 0, 2, 1, 1);
+	Task_Create_Period(print2, 0, 2, 1, 2);
+	// Wait for them to finish.
+	wait(10);
+	// Verify output.
+	for(int i = 0; i < 10; i += 2) {
+		if (buf[i] != 1) return FALSE;
+		if (buf[i+1] != 2) return FALSE;
+	}
 	return TRUE;
 }
 
 static BOOL test_switching_rr_tasks(void) {
-	return TRUE;
+	BOOL success = TRUE;
+	Task_Create_RR(task1, 0);
+	Task_Create_RR(task2, 0);
+	// This task is an RR task too, so it can check output as the test goes.
+	for(int i = 0; i < 10; i++) {
+		Task_Next();
+		if (buf[i] != 1) success = FALSE;
+		if (buf[i+1] != 2) success = FALSE;
+	}
+	return success;
+}
+
+static void delay_40ms(void) {
+	_delay_ms(40);
+}
+
+static void fib(void) {
+	if (buf_n == 0) buf[0] = 1;
+	else if (buf_n == 1) buf[1] = 1;
+	else buf[buf_n] = buf[buf_n-1] + buf[buf_n-2];
+	buf_n += 1;
+}
+
+static void start_important_work(void) {
+	for(int i = 0; i < 10; i++) {
+		Task_Create_System(fib, 0);
+		Task_Next();
+	}
+	Task_Create_System(fib, 0);
 }
 
 static BOOL test_switching_mixed_priority_tasks(void) {
-	return TRUE;
+	// Start a long-running low priority task.
+	Task_Create_RR(delay_40ms, 0);
+	// Start a periodic task which creates a new system task.
+	Task_Create_Period(start_important_work, 0, 1, 1, 0);
+	Task_Next();
+	// After 10 ticks it should all be done.
+	wait(10);
+	BOOL success = TRUE;
+	for(int i = 2; i < 10; i++) {
+		if (buf[i] != buf[i-1] + buf[i-2]) success = FALSE;
+	}
+	return success;
 }
 
 /* usart_* functions borrowed from Francesco Balducci, at https://balau82.wordpr

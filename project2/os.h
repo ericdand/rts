@@ -9,8 +9,8 @@
 #ifndef NULL
 #define NULL          0   /* undefined */
 #endif
-#define TRUE          1
 #define FALSE         0
+#define TRUE          !FALSE
 
 
 typedef unsigned int PID;        // always non-zero if it is valid
