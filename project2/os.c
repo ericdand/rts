@@ -57,11 +57,20 @@ static char debug_msg_buf[256];
 void usart_debug(const char* M, const char* filename, const int linenumber,
 		const char* funcname) {
 	// To make this work, we need to "suspend" the ticker timer so it's
-	// invisible to the RTOS. Otherwise, timing testing may not work.
+	// invisible to the RTOS. Otherwise, timing testing won't work.
 	// NB: There may still be a tiny added cost from just calling this function.
 	// But nowhere near a whole tick.
 	ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
 		uint16_t timer_val = TCNT3;
+		/* About the debug messages format:
+		 * The first two numbers N:n are the current tick (N) and a 3-digit 
+		 * count of subticks (n). There are 1000 subticks per tick; each tick
+		 * is 10ms, so each subtick is 10us, or about 160 clock cycles.
+		 * If the subtick exceeds 999, then an interrupt is pending.
+		 * Note that subticks here count to 1000, but in code they actually 
+		 * count only to 250; we multiply by 4 here to be more legible.
+		 * Following that are the name of the file, the line number, and the
+		 * function where DEBUG was used. Last comes the actual message. */
 		snprintf(debug_msg_buf, 256, "%d:%3d %s:%d:%s: %s\n", tick, timer_val*4,
 				filename, linenumber, funcname, M);
 		usart_puts(debug_msg_buf);
@@ -71,6 +80,7 @@ void usart_debug(const char* M, const char* filename, const int linenumber,
 		TCNT3 = timer_val;
 	}
 }
+
 
 #endif
 
@@ -90,6 +100,9 @@ extern void Enter_Kernel();
 uint8_t* volatile CurrentSp;
 uint8_t* volatile KernelSp;
 
+/***
+ * Task stuff
+ ***/
 typedef struct {
 	PID pid; // A number for this task; also its (index - 1) in "tasks" array.
 	uint8_t stack[WORKSPACE]; // Stack space. Includes the task's argument, arg.
@@ -105,12 +118,14 @@ typedef struct {
 /* The C standard guarantees that all global variables are initialized to 0.
  * The AVR-Libc FAQ says "variables should only be explicitly initialized if
  * the initial value is non-zero."*/
-/* TODO: I'm pretty sure that most of the stuff that needs the "volatile"
- * keyword here has it, but it would never hurt to double-check. */
 // Allocate space for each task...
 static task_t tasks[MAXTHREAD];
 // ...and create a wait queue for each priority level.
 static volatile task_t* volatile current_task;
+/* The PID of a periodic task to be run ASAP, if any is ready.
+ * If the scheduler goes to set this field and it is already set,
+ * then that should be considered a timing violation. */
+static volatile task_t* volatile periodic_task_ready;
 // Bitmask for used (1) tasks and free (0) tasks.
 // If MAXTHREAD is changed to over 16, we will need a bigger mask.
 static volatile uint16_t task_mask;
@@ -120,11 +135,10 @@ static volatile uint8_t sys_q_size, sys_q_head,
 						rr_q_size, rr_q_head;
 // This is switched to FALSE after the timer rolls over for the first time.
 static BOOL first_run = TRUE;
-/* The PID of a periodic task to be run ASAP, if any is ready.
- * If the scheduler goes to set this field and it is already set,
- * then that should be considered a timing violation. */
-static task_t* volatile periodic_task_ready;
 
+/*** 
+ * Channel stuff 
+ ***/
 typedef uint8_t CHAN_STATE;
 #define FREE 1
 #define SENDER_BLOCKED 2
@@ -135,7 +149,7 @@ typedef struct {
 	int data;
 	CHAN_STATE state;
 	PID sender;
-	PID receivers[MAXTHREAD];
+	task_t* volatile receivers[MAXTHREAD];
 } chan_t;
 static chan_t channels[MAXCHAN];
 // If MAXTHREAD is changed to over 16, we will need a bigger mask.
@@ -152,9 +166,11 @@ static void task_terminate(void) {
 	// This function is like Task_Next, except we do not put this thread back
 	// on the queue. Instead, we mark it as free, then just enter the kernel.
 	cli();
+	DEBUG("terminating task");
 	task_mask &= ~(1 << (uint8_t)(current_task->pid-1));
 	current_task = NULL;
 	Enter_Kernel();
+	// We never return to here!
 }
 
 static void task_create(unsigned int idx, void (*f)(void), int arg) {
@@ -248,6 +264,10 @@ static BOOL periodic_tasks_are_scheduled() {
 	return FALSE;
 }
 
+static BOOL interrupts_are_enabled(void) {
+	return (SREG & (1 << 7)) ? FALSE : TRUE;
+}
+
 /* From the AVR Libc Reference Manual FAQ:
  * "The canonical way to perform a software reset ... is to use
  * the watchdog timer. Enable the watchdog timer to the shortest timeout
@@ -279,7 +299,7 @@ void disable_watchdog (void) {
 
 void OS_Abort(unsigned int error) {
 	// Do a soft reset: enable the watchdog timer, set to its shortest
-	// duration, then spin forever until it resets us.
+	// duration, then spin forever until it resets us. (cf. disable_watchdog)
 	wdt_enable(WDTO_15MS);
     for(;;) {}
 }
@@ -298,17 +318,27 @@ PID Task_Create_System(void (*f)(void), int arg) {
 			}
 		}
 	}
-	// DEBUG("created sys task");
+	DEBUG("created sys task");
 	if (i != MAXTHREAD) {
 		ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
 			enqueue_system_task(&tasks[i]);
 		}
-		if (current_task != NULL && 
-				current_task->priority < SYSTEM) {
-			// Pre-empt lesser tasks.
-			Task_Next();
+		// Pre-empt lesser tasks.
+		if (current_task != NULL) {
+			if (current_task->priority == ROUND_ROBIN) {
+				Task_Next();
+			} else if (current_task->priority == PERIODIC) {
+				// Tricky behaviour: Task_Next reschedules RR and SYS tasks,
+				// but not periodic tasks; a periodic task calling Task_Next
+				// normally means that it's done its cycle. Reschedule periodic
+				// tasks if they are pre-empted.
+				periodic_task_ready = current_task;
+				Task_Next();
+			}
 		}
 		return tasks[i].pid;
+	} else {
+		DEBUG("ERROR: No more space to create new tasks!");
 	}
 	return 0;
 }
@@ -327,12 +357,14 @@ PID Task_Create_RR(void (*f)(void), int arg) {
 			}
 		}
 	}
-	// DEBUG("created rr task");
+	DEBUG("created rr task");
 	if (i != MAXTHREAD) {
 		ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
 			enqueue_rr_task(&tasks[i]);
 		}
 		return tasks[i].pid;
+	} else {
+		DEBUG("ERROR: No more space to create new tasks!");
 	}
 	return 0;
 }
@@ -354,12 +386,16 @@ PID Task_Create_Period(void (*f)(void), int arg, TICK period, TICK wcet, TICK of
 			}
 		}
 	}
-	sprintf(buf, "reated periodic task %d with period %d", i+1, period);
+	sprintf(buf, "created periodic task %d", i+1);
 	DEBUG(buf);
-	// DEBUG("created periodic task");
 	if (i != MAXTHREAD) {
 		// Periodic tasks are "automatically" scheduled; see the ISR.
+		// Periodic tasks are never run on the tick they are created, even if
+		// they would be otherwise scheduled that tick. This is to prevent them
+		// from being started right before the end of the tick.
 		return tasks[i].pid;
+	} else {
+		DEBUG("ERROR: No more space to create new tasks!");
 	}
 	return 0;
 }
@@ -378,9 +414,9 @@ void Task_Next(void) {
 	} else {
 		// Periodic tasks are automatically run when scheduled.
 		// Just switch to a new task.
-		periodic_task_ready = NULL;
 	}
 	Enter_Kernel();
+	// Execution will return from this point, with interrupts re-enabled.
 }
 
 int Task_GetArg(void) {
@@ -450,7 +486,7 @@ int main(void) {
 			sys_q_head = (sys_q_head + 1) % MAXTHREAD;
 			DEBUG("switching to sys task");
 		} else if (periodic_task_ready) {
-			next_task = periodic_task_ready;
+			next_task = (task_t*) periodic_task_ready;
 			periodic_task_ready = NULL;
 			DEBUG("switching to periodic task");
 		} else if (rr_q_size > 0) {
@@ -467,10 +503,11 @@ int main(void) {
 				sei();
 				sleep_mode();
 				cli();
+			} else {
+				// Otherwise PANIC!
+				DEBUG("ERROR: no task left to run");
+				sleep_mode();
 			}
-			// Otherwise PANIC!
-			DEBUG("ERROR: no task left to run");
-			sleep_mode();
 		}
 
 		next_task->tick_started = tick;
@@ -481,7 +518,6 @@ int main(void) {
 		DEBUG("exiting kernel");
 		// Exit_Kernel() enables interrupts as it returns.
 		Exit_Kernel();
-
 
 		// When a thread re-enters the kernel, execution resumes from here.
 		// Disable interrupts while we're in the kernel.
@@ -497,12 +533,25 @@ int main(void) {
 }
 
 TICK ticks_consumed(task_t* t) {
-	return ((tick + TCNT3) - (t->tick_started*250 + t->subtick_started))/250;
+	return ((tick*250 + TCNT3) - (t->tick_started*250 + t->subtick_started))/250;
 }
 
-// Interrupts are disabled when an ISR is entered, and re-enabled when the ISR
-// returns. However, if we call Enter_Kernel, interrupts will remain disabled
-// until re-enabled by the kernel (usually as it switches to a user task).
+/* Interrupts are disabled when an ISR is entered, and re-enabled when the ISR
+ * returns. However, if we call Enter_Kernel, interrupts will remain disabled
+ * until re-enabled by the kernel (usually as it switches to a user task).
+ *
+ * About this ISR:
+ * 	- runs once every 10ms, which marks one tick.
+ * 	- first checks whether a periodic task should run this tick.
+ * 		- if so, it sets the value of periodic_task_ready to that task.
+ *  - then, if periodic_task_ready is set, we switch to it and return.
+ *  	- NB "and return": remember, as far as the OS is concerned, this ISR is
+ *  	  a part of the "current" task, not the "system" task. When the current
+ *  	  task is resumed, it will resume in this ISR. It may be several ticks
+ *  	  before that happens, so best just return after switching.
+ *  	- so, look out changing this ISR: do important things first, and know
+ *  	  that you must return after switching.
+ */
 ISR(TIMER3_COMPA_vect)
 {
 	unsigned int i;
@@ -511,6 +560,8 @@ ISR(TIMER3_COMPA_vect)
 
 	tick += 1;
 	DEBUG("tick");
+	// save the tick when this ISR started.
+	TICK current_tick = tick;
 
 	// current_task is volatile; save work while interrupts
 	// are disabled by stashing it in a local variable.
@@ -526,29 +577,28 @@ ISR(TIMER3_COMPA_vect)
 			((tick + pt->offset) % pt->period) == 0 &&	// task runs this tick
 			(!first_run || (tick > pt->offset))			// task's offset is past
 		) {
+			sprintf(buf, "found periodic task: %d", i+1);
+			DEBUG(buf);
 			if (periodic_task_ready != NULL) {
 				// There was already a periodic task waiting!
 				DEBUG("time viol'n: multiple periodic tasks scheduled.");
 			} else if (t != NULL && 
 					t->priority == PERIODIC) {
 				// The current task is periodic and isn't finished yet!
-				DEBUG("time viol'n: periodic task preempting another");
+				DEBUG("time viol'n: periodic task preempting another (collision)");
 			} else {
 				periodic_task_ready = pt;
 			}
 		}
 	}
 
-	// Check for pre-emption by waiting system tasks.
-	if (sys_q_size > 0 && t != NULL && t->priority != SYSTEM) {
-		DEBUG("non-sys task preempted by sys task");
-		// Reschedule the pre-empted task.
-		if (t->priority == PERIODIC) {
-			periodic_task_ready = t;
-		} else { // priority == RR
-			rr_tasks[(rr_q_head + rr_q_size++) % MAXTHREAD] = t;
-		}
+	// If we have found a periodic task to run, switch to it.
+	if (periodic_task_ready) {
+		// Reschedule the current RR task, if one is running.
+		if (t->priority == ROUND_ROBIN) enqueue_rr_task(t);
+		else if (t->priority == SYSTEM) enqueue_system_task(t);
 		Enter_Kernel();
+		return;
 	}
 
 	// Has the current task has been running for a whole tick?
@@ -556,20 +606,23 @@ ISR(TIMER3_COMPA_vect)
 	if (t != NULL && ticks_consumed(t) > 0) {
 		if (t->priority == SYSTEM) {
 			// Reschedule this task.
-			system_tasks[(sys_q_head + sys_q_size++) % MAXTHREAD] = t;
+			enqueue_system_task(t);
 			DEBUG("sys task has run for a whole tick. switching...");
 			Enter_Kernel();
+			return;
 		} else if (t->priority == PERIODIC) {
 			if (ticks_consumed(t) > t->wcet) {
 				DEBUG("timing violation: task exceeded wcet");
 			}
 			// Periodic task still within its worst-case execution time.
 			// Let it run on.
+			return;
 		} else { // priority == ROUND_ROBIN
 			// Reschedule this RR task.
-			rr_tasks[(rr_q_head + rr_q_size++) % MAXTHREAD] = t;
+			enqueue_rr_task(t);
 			DEBUG("rr task has run for a whole tick. switching...");
 			Enter_Kernel();
+			return;
 		}
 	}
 

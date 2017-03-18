@@ -97,6 +97,7 @@ static BOOL test_switching_system_tasks(void) {
 	// Each of these tasks will take over immediately when scheduled.
 	Task_Create_System(task1, 0);
 	Task_Create_System(task2, 0);
+	// When execution reaches here, the system tasks have terminated.
 	for(int i = 0; i < 10; i++) {
 		// Make sure the buffer holds the right values.
 		if(buf[i] != i/5+1) success = FALSE;
@@ -104,29 +105,13 @@ static BOOL test_switching_system_tasks(void) {
 	return success;
 }
 
-static void print1(void) {
-	for(int i = 0; i < 4; i++) {
-		buf[buf_n++] = 1;
-		Task_Next();
-	}
-	buf[buf_n++] = 1;
-}
-
-static void print2(void) {
-	for(int i = 0; i < 4; i++) {
-		buf[buf_n++] = 2;
-		Task_Next();
-	}
-	buf[buf_n++] = 2;
-}
-
 static BOOL test_switching_periodic_tasks(void) {
 	// No two periodic tasks can be scheduled for the same time. So we set
 	// these to alternate ticks. They should finish with nearly 3ms to spare.
-	Task_Create_Period(print1, 0, 2, 1, 1);
-	Task_Create_Period(print2, 0, 2, 1, 2);
+	Task_Create_Period(task1, 0, 2, 0, 1);
+	Task_Create_Period(task2, 0, 2, 0, 2);
 	// Wait for them to finish.
-	wait(10);
+	wait(12);
 	// Verify output.
 	for(int i = 0; i < 10; i += 2) {
 		if (buf[i] != 1) return FALSE;
@@ -140,7 +125,8 @@ static BOOL test_switching_rr_tasks(void) {
 	Task_Create_RR(task1, 0);
 	Task_Create_RR(task2, 0);
 	// This task is an RR task too, so it can check output as the test goes.
-	for(int i = 0; i < 10; i++) {
+	for(int i = 0; i < 10; i += 2) {
+		usart_puts("DEBUG: RR LOOP\n");
 		Task_Next();
 		if (buf[i] != 1) success = FALSE;
 		if (buf[i+1] != 2) success = FALSE;
@@ -167,14 +153,14 @@ static void start_important_work(void) {
 	Task_Create_System(fib, 0);
 }
 
-static BOOL test_switching_mixed_priority_tasks(void) {
+static BOOL test_periodic_task_starting_system_tasks(void) {
 	// Start a long-running low priority task.
 	Task_Create_RR(delay_40ms, 0);
 	// Start a periodic task which creates a new system task.
-	Task_Create_Period(start_important_work, 0, 1, 1, 0);
+	Task_Create_Period(start_important_work, 0, 1, 0, 0);
 	Task_Next();
-	// After 10 ticks it should all be done.
-	wait(10);
+	// After 12 ticks it should all be done.
+	wait(12);
 	BOOL success = TRUE;
 	for(int i = 2; i < 10; i++) {
 		if (buf[i] != buf[i-1] + buf[i-2]) success = FALSE;
@@ -206,12 +192,10 @@ static void run_test_and_report(BOOL (*test)(void), char *name) {
 	usart_puts(s);
 	if (test()) {
 		// Report success.
-		sprintf(s, "SUCCESS\n");
-		usart_puts(s);
+		usart_puts("\nSUCCESS\n\n");
 	} else {
 		// Report failure.
-		sprintf(s, "FAILURE\n");
-		usart_puts(s);
+		usart_puts("\nFAILURE\n\n");
 	}
 }
 
@@ -222,15 +206,15 @@ void test_runner(void) {
 			"switching periodic tasks");
 	run_test_and_report(test_switching_rr_tasks,
 			"switching round-robin tasks");
-	run_test_and_report(test_switching_mixed_priority_tasks,
-			"switching mixed-priority tasks");
+	run_test_and_report(test_periodic_task_starting_system_tasks,
+			"periodic task starting system tasks");
 }
 
 void a_main(void) {
 	ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
 		usart_init();
 		_delay_ms(500); // Wait for the computer to attach a serial monitor.
-		usart_puts("Testing...\n\n");
+		usart_puts("\nTesting...\n\n");
 	}
 
 	// Create the task runner at a lower priority level so it doesn't get in
