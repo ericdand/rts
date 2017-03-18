@@ -113,7 +113,8 @@ typedef struct {
 	TICK wcet; // wcet = worst-case execution time.
 	volatile TICK tick_started; // the current tick when task was started.
 	volatile uint16_t subtick_started; // the value of TCNT3 when started.
-	int channel_data; // If blocked receiving from a channel, data is left here.
+	volatile int channel_data;	// If blocked receiving from a channel, 
+								// data is left here.
 } task_t;
 
 /* The C standard guarantees that all global variables are initialized to 0.
@@ -444,6 +445,7 @@ CHAN Chan_Init() {
 }
 
 void Send(CHAN c, int v) {
+	DEBUG("Send");
 	chan_t* ch = &channels[c-1];
 	if (ch->state == SENDER_BLOCKED || ch->state == MESSAGE_WAITING) {
 		DEBUG("ERROR: Multiple unrecieved sends on a channel");
@@ -457,6 +459,7 @@ void Send(CHAN c, int v) {
 			BOOL yield_to_recvr = FALSE;
 			for(int i = 0; i < ch->n_receivers; i++) {
 				recvr = ch->receivers[i];
+				recvr->channel_data = v;
 				if (recvr->priority == SYSTEM) {
 					enqueue_system_task(recvr);
 				} else if (recvr->priority == PERIODIC) {
@@ -471,7 +474,7 @@ void Send(CHAN c, int v) {
 			ch->n_receivers = 0;
 			ch->state = FREE;
 			if (yield_to_recvr) Enter_Kernel();
-		} else {
+		} else { // ch->state == FREE
 			ch->state = SENDER_BLOCKED;
 			ch->sender = (task_t*) current_task;
 			// Yield without enqueueing anywhere but the channel.
@@ -482,11 +485,13 @@ void Send(CHAN c, int v) {
 }
 
 int Recv(CHAN c) {
+	DEBUG("Recv");
 	chan_t* ch = &channels[c-1];
 	int data;
 	ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
 		if (ch->state == FREE || ch->state == RECEIVER_BLOCKED) {
 			ch->receivers[ch->n_receivers++] = (task_t*) current_task;
+			ch->state = RECEIVER_BLOCKED;
 			Enter_Kernel();
 			// If we were waiting for a sender, the data is stashed elsewhere.
 			// ch->data may by now be something completely different.
@@ -504,6 +509,7 @@ int Recv(CHAN c) {
 				// Pre-empted by sender.
 				Enter_Kernel();
 			}
+			ch->state = FREE;
 		} else { // chan->state == MESSAGE_WAITING
 			ch->state = FREE;
 			data = ch->data;
@@ -541,8 +547,10 @@ void Write(CHAN c, int v) {
 			ch->n_receivers = 0;
 			ch->state = FREE;
 			if (yield_to_recvr) Enter_Kernel();
+		} else { // ch->state == FREE
+			ch->state = MESSAGE_WAITING;
+			// just continue on; this is the non-blocking write.
 		}
-		// else: just continue on; this is the non-blocking write.
 	}
 }
 

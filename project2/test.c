@@ -209,7 +209,6 @@ static BOOL test_send_then_recv(void) {
 	// the producer produces, then the consumer consumes.
 	Task_Create_RR(producer, chan1);
 	Task_Create_RR(consumer, chan1);
-	BOOL success = TRUE;
 	for(int i = 0; i < 5; i++) {
 		// Intended trace is:
 		// - switch to producer from here
@@ -221,8 +220,14 @@ static BOOL test_send_then_recv(void) {
 		// - switch out, producer should be first task in queue again
 		// - repeat 5 times
 		Task_Next();
+	}
+	BOOL success = TRUE;
+	for(int i = 0; i < 5; i++) {
+		sprintf(s, "%d ", buf[i]);
+		usart_puts(s);
 		if (buf[i] != i) success = FALSE;
 	}
+	usart_puts("\n");
 	return success;
 }
 
@@ -261,14 +266,14 @@ static void run_test_and_report(BOOL (*test)(void), char *name) {
 
 void test_runner(void) {
 	// SCHEDULING AND SWITCHING TESTS
-	run_test_and_report(test_switching_system_tasks,
-			"switching system tasks");
-	run_test_and_report(test_switching_periodic_tasks, 
-			"switching periodic tasks");
-	run_test_and_report(test_switching_rr_tasks,
-			"switching round-robin tasks");
-	run_test_and_report(test_periodic_task_starting_system_tasks,
-			"periodic task starting system tasks");
+	// run_test_and_report(test_switching_system_tasks,
+	// 		"switching system tasks");
+	// run_test_and_report(test_switching_periodic_tasks, 
+	// 		"switching periodic tasks");
+	// run_test_and_report(test_switching_rr_tasks,
+	// 		"switching round-robin tasks");
+	// run_test_and_report(test_periodic_task_starting_system_tasks,
+	// 		"periodic task starting system tasks");
 
 	// CHANNEL TESTS
 	chan1 = Chan_Init();
