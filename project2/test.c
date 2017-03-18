@@ -42,8 +42,7 @@ static void usart_tx(char c) {
     UDR0 = c;
 }
 
-static void usart_puts(const char *s)
-{
+static void usart_puts(const char *s) {
 	// To make this work, we need to "suspend" the ticker timer so it's
 	// invisible to the RTOS. Otherwise, timing testing may not work.
 	// NB: There may still be a tiny added cost from just calling this function.
@@ -55,7 +54,7 @@ static void usart_puts(const char *s)
 			usart_tx(*s++);
 		}
 		// Clear the interrupt flag, since it's probably been set by now.
-		TIFR3 = _BV(OCF3A);
+		TIFR3 |= (TIFR3 & _BV(OCF3A));
 		// Restore the old timer value.
 		TCNT3 = timer_val;
 	}
@@ -182,6 +181,67 @@ static void usart_init(void)
     UCSR0B = _BV(TXEN0); /* Only TX */
 }
 
+/********
+ * CHANNEL TESTS
+ ********/
+
+// All channel tests share the same set of channels, since there's no way 
+// provided by the API to free up a channel at the end of a test.
+CHAN chan1;
+CHAN chan2;
+
+static void producer(void) {
+	CHAN c = (CHAN)Task_GetArg();
+	for(int i = 0; i < 5; i++)
+		Send(c, i);
+}
+
+static void consumer(void) {
+	CHAN c = (CHAN)Task_GetArg();
+	int i, n;
+	for(i = 0; i < 5; i++) {
+		n = Recv(c);
+		buf[buf_n++] = n;
+	}
+}
+
+static BOOL test_send_then_recv(void) {
+	// the producer produces, then the consumer consumes.
+	Task_Create_RR(producer, chan1);
+	Task_Create_RR(consumer, chan1);
+	BOOL success = TRUE;
+	for(int i = 0; i < 5; i++) {
+		// Intended trace is:
+		// - switch to producer from here
+		// - producer sends, blocks
+		// - switch to consumer, who consumes, re-enqueueing the producer
+		// - consumer then blocks on second recv
+		// - switch back to this task
+		// - check result
+		// - switch out, producer should be first task in queue again
+		// - repeat 5 times
+		Task_Next();
+		if (buf[i] != i) success = FALSE;
+	}
+	return success;
+}
+
+static BOOL test_recv_then_send(void) {
+	// consumer first this time.
+	Task_Create_RR(consumer, chan1);
+	Task_Create_RR(producer, chan1);
+	BOOL success = TRUE;
+	for(int i = 0; i < 5; i++) {
+		Task_Next();
+		if (buf[i] != i) success = FALSE;
+	}
+	return success;
+}
+
+/********
+ * CORE TESTING CODE
+ ********/
+
 /* This is the general "test runner" function. It takes 2 arguments:
  * * A function pointer to the test to be run.
  * * A name for the test, to be reported over serial.
@@ -200,6 +260,7 @@ static void run_test_and_report(BOOL (*test)(void), char *name) {
 }
 
 void test_runner(void) {
+	// SCHEDULING AND SWITCHING TESTS
 	run_test_and_report(test_switching_system_tasks,
 			"switching system tasks");
 	run_test_and_report(test_switching_periodic_tasks, 
@@ -208,12 +269,18 @@ void test_runner(void) {
 			"switching round-robin tasks");
 	run_test_and_report(test_periodic_task_starting_system_tasks,
 			"periodic task starting system tasks");
+
+	// CHANNEL TESTS
+	chan1 = Chan_Init();
+	chan2 = Chan_Init();
+	run_test_and_report(test_send_then_recv, "send then recv");
+	run_test_and_report(test_recv_then_send, "recv then send");
 }
 
 void a_main(void) {
 	ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
 		usart_init();
-		_delay_ms(500); // Wait for the computer to attach a serial monitor.
+		_delay_ms(1000); // Wait for the computer to attach a serial monitor.
 		usart_puts("\nTesting...\n\n");
 	}
 

@@ -113,6 +113,7 @@ typedef struct {
 	TICK wcet; // wcet = worst-case execution time.
 	volatile TICK tick_started; // the current tick when task was started.
 	volatile uint16_t subtick_started; // the value of TCNT3 when started.
+	int channel_data; // If blocked receiving from a channel, data is left here.
 } task_t;
 
 /* The C standard guarantees that all global variables are initialized to 0.
@@ -148,8 +149,9 @@ typedef struct {
 	CHAN number;
 	int data;
 	CHAN_STATE state;
-	PID sender;
+	task_t* sender;
 	task_t* volatile receivers[MAXTHREAD];
+	uint8_t n_receivers;
 } chan_t;
 static chan_t channels[MAXCHAN];
 // If MAXTHREAD is changed to over 16, we will need a bigger mask.
@@ -225,7 +227,7 @@ static void task_create(unsigned int idx, void (*f)(void), int arg) {
 	/*stack_bottom[33] is r1, the zero register. */
 	stack_bottom[33] = (uint8_t) 0;
 	/* stack_bottom[32:3] are registers r2-31. */
-	/* stack_bottom[2] is SREG. We clear it and set the I flag.*/
+	/* stack_bottom[2] is SREG. We clear it and set the I flag. */
 	stack_bottom[2] = (uint8_t) _BV(SREG_I);
 	/* stack_bottom[1] is EIND, always set to 0 to start. */
 	stack_bottom[1] = (uint8_t) 0;
@@ -386,8 +388,9 @@ PID Task_Create_Period(void (*f)(void), int arg, TICK period, TICK wcet, TICK of
 			}
 		}
 	}
-	sprintf(buf, "created periodic task %d", i+1);
-	DEBUG(buf);
+	//sprintf(buf, "created periodic task %d", i+1);
+	//DEBUG(buf);
+	DEBUG("created periodic task");
 	if (i != MAXTHREAD) {
 		// Periodic tasks are "automatically" scheduled; see the ISR.
 		// Periodic tasks are never run on the tick they are created, even if
@@ -404,19 +407,20 @@ PID Task_Create_Period(void (*f)(void), int arg, TICK period, TICK wcet, TICK of
  * will cause the calling task to be put back in its proper queue, and then
  * the kernel is invoked to choose a new task. */
 void Task_Next(void) {
-	cli();
-	// DEBUG("Task_Next");
-	// Put the current task back in its proper queue.
-	if(current_task->priority == SYSTEM) {
-		enqueue_system_task((task_t*)current_task);
-	} else if (current_task->priority == ROUND_ROBIN) {
-		enqueue_rr_task((task_t*)current_task);
-	} else {
-		// Periodic tasks are automatically run when scheduled.
-		// Just switch to a new task.
+	ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+		// DEBUG("Task_Next");
+		// Put the current task back in its proper queue.
+		if(current_task->priority == SYSTEM) {
+			enqueue_system_task((task_t*)current_task);
+		} else if (current_task->priority == ROUND_ROBIN) {
+			enqueue_rr_task((task_t*)current_task);
+		} else {
+			// Periodic tasks are automatically run when scheduled.
+			// Just switch to a new task.
+		}
+		Enter_Kernel();
+		// Execution will return from this point.
 	}
-	Enter_Kernel();
-	// Execution will return from this point, with interrupts re-enabled.
 }
 
 int Task_GetArg(void) {
@@ -427,19 +431,119 @@ int Task_GetArg(void) {
 }
 
 CHAN Chan_Init() {
+	chan_t* ch = NULL;
+	for(int i = 0; i < MAXCHAN; i++) {
+		if (channel_mask & (1 << i)) continue;
+		ch = &channels[i];
+		ch->number = i+1;
+		ch->state = FREE;
+		break;
+	}
+	if (ch != NULL) return ch->number;
 	return 0;
 }
 
-void Send(CHAN ch, int v) {
-
+void Send(CHAN c, int v) {
+	chan_t* ch = &channels[c-1];
+	if (ch->state == SENDER_BLOCKED || ch->state == MESSAGE_WAITING) {
+		DEBUG("ERROR: Multiple unrecieved sends on a channel");
+		// TODO: OS_Abort();
+		return;
+	}
+	ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+		ch->data = v;
+		if (ch->state == RECEIVER_BLOCKED) {
+			task_t* recvr;
+			BOOL yield_to_recvr = FALSE;
+			for(int i = 0; i < ch->n_receivers; i++) {
+				recvr = ch->receivers[i];
+				if (recvr->priority == SYSTEM) {
+					enqueue_system_task(recvr);
+				} else if (recvr->priority == PERIODIC) {
+					periodic_task_ready = recvr;
+				} else if (recvr->priority == ROUND_ROBIN) {
+					enqueue_rr_task(recvr);
+				}
+				if (recvr->priority > current_task->priority) {
+					yield_to_recvr = TRUE;
+				}
+			}
+			ch->n_receivers = 0;
+			ch->state = FREE;
+			if (yield_to_recvr) Enter_Kernel();
+		} else {
+			ch->state = SENDER_BLOCKED;
+			ch->sender = (task_t*) current_task;
+			// Yield without enqueueing anywhere but the channel.
+			Enter_Kernel();
+			// When we get back here, the channel's state is FREE.
+		}
+	}
 }
 
-int Recv(CHAN ch) {
-	return 0;
+int Recv(CHAN c) {
+	chan_t* ch = &channels[c-1];
+	int data;
+	ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+		if (ch->state == FREE || ch->state == RECEIVER_BLOCKED) {
+			ch->receivers[ch->n_receivers++] = (task_t*) current_task;
+			Enter_Kernel();
+			// If we were waiting for a sender, the data is stashed elsewhere.
+			// ch->data may by now be something completely different.
+			data = current_task->channel_data;
+		} else if (ch->state == SENDER_BLOCKED) {
+			data = ch->data;
+			if(ch->sender->priority == SYSTEM) {
+				enqueue_system_task(ch->sender);
+			} else if (ch->sender->priority == PERIODIC) {
+				periodic_task_ready = ch->sender;
+			} else { // chan->sender->priority == ROUND_ROBIN
+				enqueue_rr_task(ch->sender);
+			}
+			if (ch->sender->priority > current_task->priority) {
+				// Pre-empted by sender.
+				Enter_Kernel();
+			}
+		} else { // chan->state == MESSAGE_WAITING
+			ch->state = FREE;
+			data = ch->data;
+		}
+	}
+	return data;
 }
 
-void Write(CHAN ch, int v) {
-
+void Write(CHAN c, int v) {
+	chan_t* ch = &channels[c-1];
+	if (ch->state == SENDER_BLOCKED || ch->state == MESSAGE_WAITING) {
+		DEBUG("ERROR: Multiple unrecieved sends on a channel");
+		// TODO: OS_Abort();
+		return;
+	}
+	ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+		ch->data = v;
+		if (ch->state == RECEIVER_BLOCKED) {
+			task_t* recvr;
+			BOOL yield_to_recvr = FALSE;
+			for(int i = 0; i < ch->n_receivers; i++) {
+				recvr = ch->receivers[i];
+				recvr->channel_data = v;
+				if (recvr->priority == SYSTEM) {
+					enqueue_system_task(recvr);
+				} else if (recvr->priority == PERIODIC) {
+					periodic_task_ready = recvr;
+				} else if (recvr->priority == ROUND_ROBIN) {
+					enqueue_rr_task(recvr);
+				}
+				if (recvr->priority > current_task->priority) {
+					yield_to_recvr = TRUE;
+				}
+			}
+			ch->n_receivers = 0;
+			ch->state = FREE;
+			if (yield_to_recvr) Enter_Kernel();
+		}
+		// else: just continue on; this is the non-blocking write.
+	}
 }
 
 unsigned int Now() {
@@ -516,12 +620,9 @@ int main(void) {
 		current_task = next_task;
 
 		DEBUG("exiting kernel");
-		// Exit_Kernel() enables interrupts as it returns.
 		Exit_Kernel();
 
 		// When a thread re-enters the kernel, execution resumes from here.
-		// Disable interrupts while we're in the kernel.
-		cli();
 		DEBUG("re-entered kernel");
 		if (current_task != NULL) {
 			current_task->sp = CurrentSp;
@@ -577,8 +678,9 @@ ISR(TIMER3_COMPA_vect)
 			((tick + pt->offset) % pt->period) == 0 &&	// task runs this tick
 			(!first_run || (tick > pt->offset))			// task's offset is past
 		) {
-			sprintf(buf, "found periodic task: %d", i+1);
-			DEBUG(buf);
+			//sprintf(buf, "found periodic task: %d", i+1);
+			//DEBUG(buf);
+			DEBUG("found periodic task");
 			if (periodic_task_ready != NULL) {
 				// There was already a periodic task waiting!
 				DEBUG("time viol'n: multiple periodic tasks scheduled.");

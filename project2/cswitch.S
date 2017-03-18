@@ -146,7 +146,7 @@ Exit_Kernel:
 		 * First we pop all of CP's registers from its stack... */
         RESTORECTX
 		/* ...and now the bottom of CP's stack should be its return address. */
-        reti         /* re-enable all global interrupts */
+        ret         /* Just return; we restore SREG in RESTORECTX */
 
 /*
   *
