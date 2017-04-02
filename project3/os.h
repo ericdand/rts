@@ -1,7 +1,8 @@
-#ifndef _OS_H_  
-#define _OS_H_  
-   
-#define MAXTHREAD     16       
+/* Last modified: MHMC Feb/15/2017 */
+#ifndef _OS_H_
+#define _OS_H_
+
+#define MAXPROCESS     16
 #define WORKSPACE     256   // in bytes, per THREAD
 #define MAXCHAN       16
 #define MSECPERTICK   10   // resolution of a system TICK in milliseconds
@@ -9,8 +10,8 @@
 #ifndef NULL
 #define NULL          0   /* undefined */
 #endif
+#define TRUE          1
 #define FALSE         0
-#define TRUE          !FALSE
 
 
 typedef unsigned int PID;        // always non-zero if it is valid
@@ -58,14 +59,14 @@ PID   Task_Create_Period(void (*f)(void), int arg, TICK period, TICK wcet, TICK 
 // NOTE: When a task function returns, it terminates automatically!!
 
 // When a Periodic ask calls Task_Next(), it will resume at the beginning of its next period.
-// When a RR or System task calls Task_Next(), it voluntarily gives up execution and 
+// When a RR or System task calls Task_Next(), it voluntarily gives up execution and
 // re-enters the ready state. All RR and Systems tasks are first-come-first-served.
-//   
+//
 void Task_Next(void);
 
 
 // The calling task gets its initial "argument" when it was created.
-int Task_GetArg(void);
+int  Task_GetArg(void);
 
 /*
  * A CHAN is a one-way communication channel between at least two tasks. It must be
@@ -82,16 +83,16 @@ CHAN Chan_Init();
  * sender waiting. When a sender and one or more receiver are ready to communicate,
  * the value "v" from the sender is returned to each waiting receiver. That is, the
  * communication occurs when both sender and the receiver(s) are ready.
- * Thus, communication is synchronous. Mutliple receivers can receive from the same 
+ * Thus, communication is synchronous. Mutliple receivers can receive from the same
  * CHAN. When a sender is ready to communicate with multiple receivers, all receivers
  * will receive the same value at the same time, i.e., a Send() is a multi-cast operation
  * when multiple receivers are waiting. However, when a sender is waiting, then the next
  * receiver will communicate with the waiting sender only.
  *
- * It is an error if multiple senders send on the same CHAN. 
+ * It is an error if multiple senders send on the same CHAN.
  * As a result, the RTOS may abort when this occurs.
  * Periodic tasks are NOT allowed to use blocking Send() or Recv().
- * 
+ *
  */
 void Send( CHAN ch, int v );  // blocking send on CHAN
 int Recv( CHAN ch );          // blocking receive on CHAN
@@ -110,7 +111,7 @@ int Recv( CHAN ch );          // blocking receive on CHAN
 void Write( CHAN ch, int v );   // non-blocking send on CHAN
 
 
-/**  
+/**
   * Returns the number of milliseconds since OS_Init(). Note that this number
   * wraps around after it overflows as an unsigned integer. The arithmetic
   * of 2's complement will take care of this wrap-around behaviour if you use
@@ -138,5 +139,4 @@ unsigned int Now();  // number of milliseconds since the RTOS boots.
  *  "a_main()" is a parameterless function defined by the application, which will create all other
  *  application tasks as necessary.
  */
-extern void a_main(void);
 #endif /* _OS_H_ */
