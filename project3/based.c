@@ -6,8 +6,8 @@
 #include "os.h"
 #include "bluetooth_usart.h"
 
-// The size of the joystick deadzone; current set to 1/8th of total range.
-#define JS_DEADZONE (0xFF / 8)
+// The size of the joystick deadzone. Numbers [0, 255], with 128 being the centre.
+#define JS_DEADZONE 10
 
 // ADC pins thumbsticks ought to be plugged into.
 #define TURRET_THUMB_X 0
@@ -94,22 +94,6 @@ static void joystick_interpreter(void) {
 	int pan, tilt, rot, vel;
 	BOOL moving;
 	for(;;) {
-		// Sample thumbsticks.
-		pan = sample_adc(TURRET_THUMB_X);
-		tilt = sample_adc(TURRET_THUMB_Y);
-		rot = sample_adc(ROOMBA_THUMB_X);
-		vel = sample_adc(ROOMBA_THUMB_Y);
-		// Interpret thumbsticks to movement.
-		pan = pan >> 2; // Shift right by two to go from 0-1023 to 0-255.
-		tilt = tilt >> 2;
-
-		// Send commands over bluetooth.
-		// Turret commands are stateless; just send them.
-		if (pan > 127 + JS_DEADZONE || pan < 127 - JS_DEADZONE)
-			enqueue_data_command(T_PAN, (uint8_t)pan);
-		if (tilt > 127 + JS_DEADZONE || tilt < 127 - JS_DEADZONE)
-			enqueue_data_command(T_TILT, (uint8_t)tilt);
-		
 		if (roomba_state == ROOMBA_STOPPING) {
 			// Still awaiting an ACK on a stop command; retransmit it.
 			enqueue_simple_command(R_STOP);
@@ -117,6 +101,25 @@ static void joystick_interpreter(void) {
 			Task_Next();
 			continue;
 		}
+
+		// Sample thumbsticks.
+		pan = sample_adc(TURRET_THUMB_X);
+		tilt = sample_adc(TURRET_THUMB_Y);
+		rot = sample_adc(ROOMBA_THUMB_X);
+		vel = sample_adc(ROOMBA_THUMB_Y);
+
+		// Interpret thumbsticks to movement.
+		pan = pan >> 2; // Shift right by two to go from 0-1023 to 0-255.
+		tilt = tilt >> 2;
+		rot = rot >> 2;
+		vel = vel >> 2;
+
+		// Send commands over bluetooth.
+		// Turret commands are stateless; just send them.
+		if (pan > 127 + JS_DEADZONE || pan < 127 - JS_DEADZONE)
+			enqueue_data_command(T_PAN, (uint8_t)pan);
+		if (tilt > 127 + JS_DEADZONE || tilt < 127 - JS_DEADZONE)
+			enqueue_data_command(T_TILT, (uint8_t)tilt);
 
 		moving = FALSE;
 		if (vel > 127 + JS_DEADZONE || vel < 127 - JS_DEADZONE) {
@@ -188,7 +191,12 @@ void a_main(void) {
 	DDRB &= ~(LASER_BUTTON); // Set laser pin as input.
 	PORTB |= LASER_BUTTON;   // Activate the pull-up resistor.
 
-	Task_Create_Period(joystick_interpreter, 0, 10, 0, 0);
+#ifndef NDEBUG
+	DDRB |= _BV(PB7); // PB7 is the built-in LED.
+	PORTB &= ~(_BV(PB7));
+#endif
+
+	Task_Create_Period(joystick_interpreter, 0, 10, 1, 1);
 	Task_Create_Period(button_interpreter, 0, 10, 0, 3);
 	Task_Create_Period(bt_tx, 0, 10, 1, 6);
 }
