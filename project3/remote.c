@@ -25,7 +25,7 @@ static uint8_t get_rx_q_head(void) {
 	return data;
 }
 
-// Plug the pan servo into pin 11, tilt into pin 12.
+// Plug the pan servo into pin 11 (PB5), tilt into pin 12 (PB6).
 static void servo_init(void) {
 	// Set OC1A (PB5) and OC1B (PB6) to output mode.
 	DDRB = _BV(PB5) | _BV(PB6);
@@ -34,10 +34,10 @@ static void servo_init(void) {
 	// and set the prescaler to 64 (CS12:0 = 3).
 	TCCR1A = _BV(WGM11) | _BV(COM1A1) | _BV(COM1B1);
 	TCCR1B = _BV(WGM13) | _BV(WGM12) | _BV(CS11) | _BV(CS10);
-	
+
 	// ICR1 controls when the timer resets.
 	ICR1 = 5000; // (16M / 50 Hz) / 64 = 5000.
-	OCR1A = 375; // The OCR registers control when OC1A and OC1B are cleared.
+	OCR1A = 375; // The OCR registers control when OC1A and OC1B are set low.
 	OCR1B = 375; // 375 should turn out to be 1500 microseconds.
 }
 
@@ -47,7 +47,7 @@ static void roomba_write(uint8_t b) {
 	UDR2 = b;
 }
 
-// Some select Roomba commands.
+// Some Roomba commands.
 #define ROOMBA_START 128
 #define ROOMBA_SAFE  131
 #define ROOMBA_DRIVE 137
@@ -158,13 +158,12 @@ static void command_interpreter(void) {
 
 static void turret_controller(void) {
 	for(;;) {
-		// Thanks to how the PWM generator clock skew works, we are seeking to
-		// map pan and tilt inputs from [0, 255] to [250, 500].
-		// The easiest way to do this is to just add 250, as long as we're ok
-		// with exceeding 500 slightly. 
-		// This is fine, since it shouldn't harm the servos.
-		OCR1A = t_pan + 250;
-		OCR1B = t_tilt + 250;
+		// Thanks to how the PWM generator clock skew works, we are seeking
+		// to map pan and tilt inputs from [0, 255] to [250, 500].
+		// The easiest way to do this is to just add 248, since
+		// exceeding the limits slightly shouldn't harm the servos.
+		OCR1A = t_pan + 248;
+		OCR1B = t_tilt + 248;
 		Task_Next();
 	}
 }
@@ -180,12 +179,13 @@ static void roomba_controller(void) {
 		// Map rotation from [0, 255] to [-2000, 2000], reversed.
 		// (i.e. 255 -> 1, 0 -> -1, 130 -> 2000, 126 -> -2000, 128 -> 0).
 		if (r_rot > 129) {
-			radius = 2000 - (r_rot << 4);
-			if (radius < 0) radius = 1;
+			radius = 2000 - ((r_rot - 128) << 4); // (127 << 4) = 2032.
+			if (radius < 0) radius = 1; // Thumbstick at extremity.
 		} else if (r_rot < 127){
-			radius = -2000 + (r_rot << 4);
-			if (radius > 0) radius = -1;
-		} else { // r_rot ~= 128
+			radius = -(r_rot << 4); // (126 << 4) = 2016.
+			if (radius < -2000) radius = -2000; // Unlikely but possible.
+			else if (radius == 0) radius = -1; // Thumbstick at extremity.
+		} else { // r_rot == ~128
 			radius = 0x7FFF; // Set radius to 32767 to drive straight.
 		}
 
@@ -196,7 +196,7 @@ static void roomba_controller(void) {
 		} else if (r_vel < 127) {
 			velocity = -r_vel * 4;
 			if (velocity < -500) velocity = -500;
-		} else { // r_vel ~= 128
+		} else { // r_vel == ~128
 			velocity = 0;
 		}
 
@@ -217,7 +217,7 @@ void a_main(void) {
 	roomba_init();
 	DDRB |= LASER_PIN;
 
-	Task_Create_Period(command_interpreter, 0, 10, 0, 0);
+	Task_Create_Period(command_interpreter, 0, 10, 0, 1);
 	Task_Create_Period(turret_controller, 0, 10, 0, 4);
 	Task_Create_Period(roomba_controller, 0, 10, 1, 7);
 }
