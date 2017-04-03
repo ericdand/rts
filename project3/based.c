@@ -4,7 +4,7 @@
 #include <avr/interrupt.h>
 
 #include "os.h"
-#include "bluetooth_proto.h"
+#include "bluetooth_usart.h"
 
 // The size of the joystick deadzone; current set to 1/8th of total range.
 #define JS_DEADZONE (0xFF / 8)
@@ -22,37 +22,27 @@
 #define ROOMBA_STOPPED 0
 #define ROOMBA_MOVING 1
 #define ROOMBA_STOPPING 2
-uint8_t roomba_state;
+volatile uint8_t roomba_state;
 
 #define BTN_UP_ACKED 0
 #define BTN_DOWN_AWAITING_ACK 1
 #define BTN_DOWN_ACKED 2
 #define BTN_UP_AWAITING_ACK 3
-uint8_t laser_state;
+volatile uint8_t laser_state;
 
 #define TX_Q_SIZE 32
 uint8_t bt_tx_q[TX_Q_SIZE];
-uint8_t bt_tx_head, bt_tx_n;
+volatile uint8_t bt_tx_head, bt_tx_n;
 
-/* usart_* functions borrowed from Francesco Balducci, at https://balau82.wordpr
- * ess.com/2014/12/23/using-a-rain-sensor-with-arduino-uno-in-c/ */
-#define BAUD 19200
-#include <util/setbaud.h>
-static void usart_init(void) {
-    UBRR1H = UBRRH_VALUE;
-    UBRR1L = UBRRL_VALUE;
-#if USE_2X
-    UCSR1A |= _BV(U2X1);
-#else
-    UCSR1A &= ~_BV(U2X1);
-#endif
-	// Tx and Rx, with Rx completion interrupts enabled.
-    UCSR1B = _BV(TXEN1) | _BV(RXEN1) | _BV(RXCIE1);
+static void enqueue_simple_command(uint8_t cmd) {
+	bt_tx_q[(bt_tx_head + bt_tx_n++) % TX_Q_SIZE] = cmd;
+	// ACK expectation and handling is left to functions which call
+	// enqueue_simple_command, and the UART Rx interrupt service routine.
 }
 
-static void usart_tx(uint8_t b) {
-    while(!(UCSR1A & _BV(UDRE1)));
-    UDR1 = b;
+static void enqueue_data_command(uint8_t cmd, uint8_t data) {
+	bt_tx_q[(bt_tx_head + bt_tx_n++) % TX_Q_SIZE] = cmd;
+	bt_tx_q[(bt_tx_head + bt_tx_n++) % TX_Q_SIZE] = data;
 }
 
 static int sample_adc(uint8_t pin) {
@@ -86,24 +76,14 @@ static int sample_adc(uint8_t pin) {
 	return (high << 8) | low;
 }
 
-static void enqueue_simple_command(uint8_t cmd) {
-	bt_tx_q[(bt_tx_head + bt_tx_n++) % TX_Q_SIZE] = cmd;
-	// ACK expectation and handling is left to functions which call
-	// enqueue_simple_command, and the UART Rx interrupt service routine.
-}
-
-static void enqueue_data_command(uint8_t cmd, uint8_t data) {
-	bt_tx_q[(bt_tx_head + bt_tx_n++) % TX_Q_SIZE] = cmd;
-	bt_tx_q[(bt_tx_head + bt_tx_n++) % TX_Q_SIZE] = data;
-}
-
 /*******
  * Tasks
  *******/
 static void bt_tx(void) {
 	for(;;) {
 		while(bt_tx_n) {
-			usart_tx(bt_tx_q[bt_tx_head++]);
+			usart_tx(bt_tx_q[bt_tx_head]);
+			bt_tx_head = (bt_tx_head + 1) % TX_Q_SIZE;
 			bt_tx_n--;
 		}
 		Task_Next();

@@ -1,3 +1,5 @@
+#ifndef _BLUETOOTH_USART_
+#define _BLUETOOTH_USART_
 // BLUETOOTH COMMS MACROS
 ///////////////////////// 
 
@@ -16,3 +18,7 @@
 #define L_ON 129
 #define L_OFF 130
 
+void usart_init(void);
+void usart_tx(uint8_t b);
+
+#endif /* ifndef _BLUETOOTH_USART_ */
