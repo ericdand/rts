@@ -13,6 +13,6 @@
 #define T_TILT 4
 // Simple commands
 #define R_STOP 128
-#define T_LASER_ON 129
-#define T_LASER_OFF 130
+#define L_ON 129
+#define L_OFF 130
 

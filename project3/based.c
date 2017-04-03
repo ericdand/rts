@@ -1,6 +1,7 @@
 #include <stdint.h>
 
 #include <avr/io.h>
+#include <avr/interrupt.h>
 
 #include "os.h"
 #include "bluetooth_proto.h"
@@ -14,17 +15,47 @@
 #define ROOMBA_THUMB_X 2
 #define ROOMBA_THUMB_Y 3
 
-// Used to track whether we got an ACK on our last stop command.
-// Also used to tell whether we're allowed to send another stop command;
-// if it's FALSE, then a stop command may be sent. If TRUE, then suppress
-// any further stop commands. Set to FALSE when a movement command is sent.
-BOOL stop_acknowledged;
+// Thumbstick button should be wired to Arduino pin 52 (PB1).
+#define LASER_BUTTON _BV(PB1)
+
+// If state is ROOMBA_STOPPING, then we're expecting an ACK to a stop command.
+#define ROOMBA_STOPPED 0
+#define ROOMBA_MOVING 1
+#define ROOMBA_STOPPING 2
+uint8_t roomba_state;
+
+#define BTN_UP_ACKED 0
+#define BTN_DOWN_AWAITING_ACK 1
+#define BTN_DOWN_ACKED 2
+#define BTN_UP_AWAITING_ACK 3
+uint8_t laser_state;
 
 #define TX_Q_SIZE 32
 uint8_t bt_tx_q[TX_Q_SIZE];
 uint8_t bt_tx_head, bt_tx_n;
 
-int sample_adc(uint8_t pin) {
+/* usart_* functions borrowed from Francesco Balducci, at https://balau82.wordpr
+ * ess.com/2014/12/23/using-a-rain-sensor-with-arduino-uno-in-c/ */
+#define BAUD 19200
+#include <util/setbaud.h>
+static void usart_init(void) {
+    UBRR1H = UBRRH_VALUE;
+    UBRR1L = UBRRL_VALUE;
+#if USE_2X
+    UCSR1A |= _BV(U2X1);
+#else
+    UCSR1A &= ~_BV(U2X1);
+#endif
+	// Tx and Rx, with Rx completion interrupts enabled.
+    UCSR1B = _BV(TXEN1) | _BV(RXEN1) | _BV(RXCIE1);
+}
+
+static void usart_tx(uint8_t b) {
+    while(!(UCSR1A & _BV(UDRE1)));
+    UDR1 = b;
+}
+
+static int sample_adc(uint8_t pin) {
 	// This code is adapted from the Arduino libraries.
 	uint8_t low, high;
 
@@ -66,7 +97,20 @@ static void enqueue_data_command(uint8_t cmd, uint8_t data) {
 	bt_tx_q[(bt_tx_head + bt_tx_n++) % TX_Q_SIZE] = data;
 }
 
-void joystick_interpreter(void) {
+/*******
+ * Tasks
+ *******/
+static void bt_tx(void) {
+	for(;;) {
+		while(bt_tx_n) {
+			usart_tx(bt_tx_q[bt_tx_head++]);
+			bt_tx_n--;
+		}
+		Task_Next();
+	}
+}
+
+static void joystick_interpreter(void) {
 	int pan, tilt, rot, vel;
 	BOOL moving;
 	for(;;) {
@@ -86,7 +130,14 @@ void joystick_interpreter(void) {
 		if (tilt > 127 + JS_DEADZONE || tilt < 127 - JS_DEADZONE)
 			enqueue_data_command(T_TILT, (uint8_t)tilt);
 		
-		// Roomba commands use a "stop" command, so we have to track state.
+		if (roomba_state == ROOMBA_STOPPING) {
+			// Still awaiting an ACK on a stop command; retransmit it.
+			enqueue_simple_command(R_STOP);
+			// Don't bother to read any further input this loop.
+			Task_Next();
+			continue;
+		}
+
 		moving = FALSE;
 		if (vel > 127 + JS_DEADZONE || vel < 127 - JS_DEADZONE) {
 			moving = TRUE;
@@ -99,10 +150,11 @@ void joystick_interpreter(void) {
 		
 		if (moving) {
 			// Roomba is moving; now allowed to send another stop command.
-			stop_acknowledged = FALSE;
-		} else if (!stop_acknowledged) {
+			roomba_state = ROOMBA_MOVING;
+		} else if (roomba_state == ROOMBA_MOVING) {
 			// Joystick not displaced, and we've not yet sent a "stop" 
 			// command which was ACK'd. Tell the Roomba to stop.
+			roomba_state = ROOMBA_STOPPING;
 			enqueue_simple_command(R_STOP);
 		}
 		// Pass until next time.
@@ -111,11 +163,78 @@ void joystick_interpreter(void) {
 	}
 }
 
+static void button_interpreter(void) {
+	for(;;) {
+		// If still awaiting an ACK, retransmit and yield this time around.
+		if (laser_state == BTN_DOWN_AWAITING_ACK) {
+			// Retransmit L_ON.
+			enqueue_simple_command(L_ON);
+			Task_Next();
+			continue;
+		} else if (laser_state == BTN_UP_AWAITING_ACK) {
+			// Retransmit L_OFF.
+			enqueue_simple_command(L_OFF);
+			Task_Next();
+			continue;
+		}
+
+		// Not awaiting any ACK. Read input and act, if necessary.
+		if (PINB & LASER_BUTTON) {
+			// Button is up.
+			if (laser_state == BTN_DOWN_ACKED) {
+				// Send L_OFF command.
+				laser_state = BTN_UP_AWAITING_ACK;
+				enqueue_simple_command(L_OFF);
+			}
+		} else {
+			// Button is down.
+			if (laser_state == BTN_UP_ACKED) {
+				// Send L_ON command.
+				laser_state = BTN_DOWN_AWAITING_ACK;
+				enqueue_simple_command(L_ON);
+			}
+		}
+		Task_Next();
+	}
+}
+
 /*
  * a_main is the entry point of the application; 
  * it is the first system task run by the OS.
  */
 void a_main(void) {
-	Task_Create_RR(joystick_interpreter, 0);
+	usart_init();
+
+	DDRB &= ~(LASER_BUTTON); // Set laser pin as input.
+	PORTB |= LASER_BUTTON;   // Activate the pull-up resistor.
+
+	Task_Create_Period(joystick_interpreter, 0, 10, 0, 0);
+	Task_Create_Period(button_interpreter, 0, 10, 0, 3);
+	Task_Create_Period(bt_tx, 0, 10, 1, 6);
+}
+
+ISR(USART1_RX_vect) {
+	uint8_t data = UDR1;
+
+	if (data == L_ON) {
+		if (laser_state == BTN_DOWN_AWAITING_ACK) {
+			laser_state = BTN_DOWN_ACKED;
+		} else {
+			// Unexpected ACK. Possibly an error.
+		}
+	} else if (data == L_OFF) {
+		if (laser_state == BTN_UP_AWAITING_ACK) {
+			laser_state = BTN_UP_ACKED;
+		} else {
+			// Unexpected ACK. Error?
+		}
+	} else if (data == R_STOP) {
+		if (roomba_state == ROOMBA_STOPPING) {
+			roomba_state = ROOMBA_STOPPED;
+		} else {
+			// Unexpected ACK. Error?
+		}
+	}
+	// else: Unexpected message. Deffs an error.
 }
 
