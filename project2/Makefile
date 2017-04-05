@@ -10,7 +10,7 @@ USER_LIB_PATH := $(realpath ../libraries)
 MONITOR_CMD			= picocom
 MONITOR_PARAMS		= -c --omap delbs --imap lfcrlf
 MONITOR_BAUDRATE	= 19200
-CFLAGS = -DNDEBUG
+# CFLAGS = -DNDEBUG
 include /usr/local/opt/arduino-mk/Arduino.mk
 
 # The test target builds and uploads the code, then connects the serial

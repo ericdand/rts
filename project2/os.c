@@ -612,9 +612,11 @@ int main(void) {
 			// task will be scheduled. Put the processor to sleep.
 			if (periodic_tasks_are_scheduled()) {
 				DEBUG("awaiting periodic task; enabling sleep");
+				current_task = NULL;
 				sei();
 				sleep_mode();
 				cli();
+				continue;
 			} else {
 				// Otherwise PANIC!
 				DEBUG("ERROR: no task left to run");
@@ -704,10 +706,17 @@ ISR(TIMER3_COMPA_vect)
 
 	// If we have found a periodic task to run, switch to it.
 	if (periodic_task_ready) {
-		// Reschedule the current RR task, if one is running.
-		if (t->priority == ROUND_ROBIN) enqueue_rr_task(t);
+		// If no task is currently running, then this ISR awoke the system from
+		// sleep mode. This means we're in the kernel. Don't call Enter_Kernel,
+		// just return and we'll end up in the kernel. This is the only
+		// situation in which this ISR could interrupt the kernel, since
+		// interrupts are otherwise disabled while in the kernel context.
+		if (t == NULL) return;
+		// Reschedule the current task and enter the kernel to switch.
+		else if (t->priority == ROUND_ROBIN) enqueue_rr_task(t);
 		else if (t->priority == SYSTEM) enqueue_system_task(t);
 		Enter_Kernel();
+		// The task we rescheduled will resume from here. Return to it.
 		return;
 	}
 

@@ -37,6 +37,25 @@ static volatile int buf_n;
  * for writing formatted strings in preparation for output. */
 static char s[128];
 
+// All channel tests share the same set of channels, since there's no way 
+// provided by the API to free up a channel at the end of a test.
+CHAN chan1;
+CHAN chan2;
+
+/* usart_* functions borrowed from Francesco Balducci, at https://balau82.wordpr
+ * ess.com/2014/12/23/using-a-rain-sensor-with-arduino-uno-in-c/ */
+static void usart_init(void)
+{
+    UBRR0H = UBRRH_VALUE;
+    UBRR0L = UBRRL_VALUE;
+#if USE_2X
+    UCSR0A |= _BV(U2X0);
+#else
+    UCSR0A &= ~_BV(U2X0);
+#endif
+    UCSR0B = _BV(TXEN0); /* Only TX */
+}
+
 static void usart_tx(char c) {
     while(!(UCSR0A & _BV(UDRE0)));
     UDR0 = c;
@@ -167,28 +186,36 @@ static BOOL test_periodic_task_starting_system_tasks(void) {
 	return success;
 }
 
-/* usart_* functions borrowed from Francesco Balducci, at https://balau82.wordpr
- * ess.com/2014/12/23/using-a-rain-sensor-with-arduino-uno-in-c/ */
-static void usart_init(void)
-{
-    UBRR0H = UBRRH_VALUE;
-    UBRR0L = UBRRL_VALUE;
-#if USE_2X
-    UCSR0A |= _BV(U2X0);
-#else
-    UCSR0A &= ~_BV(U2X0);
-#endif
-    UCSR0B = _BV(TXEN0); /* Only TX */
+static void task3(void) {
+	int i;
+	for(i = 0; i < 4; i++) {
+		buf[buf_n++] = 1;
+		Task_Next();
+	}
+	buf[buf_n++] = 1;
+	Send(chan1, 0);
+}
+
+static BOOL test_periodic_tasks_with_no_other_tasks(void) {
+	// For this test, we need to get test_runner out of the way so that there
+	// are no tasks scheduled. We start the test then receive on chan1. When
+	// the test is done, it writes to chan1 and the test_runner resumes.
+	Task_Create_Period(task3, 0, 2, 0, 1);
+	Task_Create_Period(task2, 0, 2, 0, 2);
+	Recv(chan1);
+	wait(2); // Wait two extra ticks in case the signalling task is run first.
+	for(int i = 0; i < 10; i += 2) {
+		// Not sure which one will run first (depends on what the current tick
+		// is), but we can be sure that they will alternate.
+		if ( (buf[i] != 1 || buf[i+1] != 2) &&
+			(buf[i] != 2 || buf[i+1] != 1) ) return FALSE;
+	}
+	return TRUE; // If we made it this far, then we passed the test.
 }
 
 /********
  * CHANNEL TESTS
  ********/
-
-// All channel tests share the same set of channels, since there's no way 
-// provided by the API to free up a channel at the end of a test.
-CHAN chan1;
-CHAN chan2;
 
 static void producer(void) {
 	CHAN c = (CHAN)Task_GetArg();
@@ -253,7 +280,7 @@ static BOOL test_recv_then_send(void) {
  * The name must be a null-terminated string. */
 static void run_test_and_report(BOOL (*test)(void), char *name) {
 	buf_n = 0;
-	sprintf(s, "Running test: %s\n", name);
+	sprintf(s, "\nRunning test: %s\n\n", name);
 	usart_puts(s);
 	if (test()) {
 		// Report success.
@@ -266,26 +293,29 @@ static void run_test_and_report(BOOL (*test)(void), char *name) {
 
 void test_runner(void) {
 	// SCHEDULING AND SWITCHING TESTS
-	// run_test_and_report(test_switching_system_tasks,
-	// 		"switching system tasks");
-	// run_test_and_report(test_switching_periodic_tasks, 
-	// 		"switching periodic tasks");
-	// run_test_and_report(test_switching_rr_tasks,
-	// 		"switching round-robin tasks");
-	// run_test_and_report(test_periodic_task_starting_system_tasks,
-	// 		"periodic task starting system tasks");
+	run_test_and_report(test_switching_system_tasks,
+			"switching system tasks");
+	run_test_and_report(test_switching_periodic_tasks, 
+			"switching periodic tasks");
+	run_test_and_report(test_switching_rr_tasks,
+			"switching round-robin tasks");
+	run_test_and_report(test_periodic_task_starting_system_tasks,
+			"periodic task starting system tasks");
+	
+	chan1 = Chan_Init();
+	run_test_and_report(test_periodic_tasks_with_no_other_tasks,
+			"periodic tasks with no other tasks scheduled");
 
 	// CHANNEL TESTS
-	chan1 = Chan_Init();
-	chan2 = Chan_Init();
-	run_test_and_report(test_send_then_recv, "send then recv");
-	run_test_and_report(test_recv_then_send, "recv then send");
+	// chan2 = Chan_Init();
+	// run_test_and_report(test_send_then_recv, "send then recv");
+	// run_test_and_report(test_recv_then_send, "recv then send");
 }
 
 void a_main(void) {
 	ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
 		usart_init();
-		_delay_ms(1000); // Wait for the computer to attach a serial monitor.
+		_delay_ms(500); // Wait for the computer to attach a serial monitor.
 		usart_puts("\nTesting...\n\n");
 	}
 
