@@ -1,6 +1,6 @@
 #include <avr/io.h>
 
-#define BAUD 19200
+#define BAUD 9600
 #include <util/setbaud.h>
 void usart_init(void) {
     UBRR1H = UBRRH_VALUE;
@@ -18,4 +18,3 @@ void usart_tx(uint8_t b) {
     while(!(UCSR1A & _BV(UDRE1)));
     UDR1 = b;
 }
-
