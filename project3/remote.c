@@ -2,16 +2,32 @@
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#include <util/atomic.h>
 #include <util/delay.h>
 
 #include "os.h"
 #include "bluetooth_usart.h"
 
-// Connect the Roomba BRC to pin 53, and the laser to pin 52.
-#define ROOMBA_BRC _BV(PB0)
-#define LASER_PIN  _BV(PB1)
+#include "debug.h"
+#ifndef NDEBUG
+#include <stdio.h>
+#endif
+// Use the DEBUG(M) macro to write debug messages over the USB (baud 19200).
+// If NDEBUG is defined, no DEBUG messages will be compiled in.
+void dbg_print_byte(uint8_t data) {
+#ifndef NDEBUG
+	char s[16];
+	sprintf(s, "%d", data);
+#endif
+	DEBUG(s);
+}
 
-volatile uint8_t r_vel, r_rot, t_pan, t_tilt;
+// Connect the Roomba BRC to pin 53, and the laser to pin 52.
+#define ROOMBA_BRC (1 << PB0)
+#define LASER_PIN  (1 << PB1)
+
+volatile uint8_t r_vel, r_rot;
+volatile int8_t t_pan, t_tilt;
 
 #define RX_Q_SIZE 32
 uint8_t bt_rx_q[RX_Q_SIZE];
@@ -19,16 +35,19 @@ volatile uint8_t bt_rx_head, bt_rx_n;
 
 // NB: This will blindly do as asked. Make sure there's something there first!
 static uint8_t get_rx_q_head(void) {
-	uint8_t data = bt_rx_q[bt_rx_head];
-	bt_rx_head = (bt_rx_head + 1) % RX_Q_SIZE;
-	bt_rx_n--;
+	uint8_t data;
+	ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+		data = bt_rx_q[bt_rx_head];
+		bt_rx_head = (bt_rx_head + 1) % RX_Q_SIZE;
+		bt_rx_n--;
+	}
 	return data;
 }
 
 // Plug the pan servo into pin 11 (PB5), tilt into pin 12 (PB6).
 static void servo_init(void) {
 	// Set OC1A (PB5) and OC1B (PB6) to output mode.
-	DDRB = _BV(PB5) | _BV(PB6);
+	DDRB |= _BV(PB5) | _BV(PB6);
 	// Set to Fast PWM Mode (WGM13:0 = 14), 
 	// set the OC registers to clear when triggered (COM1x1:0 = 2),
 	// and set the prescaler to 64 (CS12:0 = 3).
@@ -65,10 +84,11 @@ static void roomba_init(void) {
 #endif
 	UCSR2B = _BV(TXEN2); // Tx only.
 
-	DDRB |= ROOMBA_BRC;  // Enable it for output.
-	PORTB |= ROOMBA_BRC; // Set it.
+	DDRB |= _BV(DDB0);   // Enable pin 53 for output.
+	_delay_ms(100);
+	PORTB |= ROOMBA_BRC; // Pull the Roomba BRC pin high.
 	//Set Roomba baud rate by toggling the BRC pin 3 times.
-	_delay_ms(2500);
+	_delay_ms(300);
 	PORTB &= ~ROOMBA_BRC;
 	_delay_ms(300);
 	PORTB |= ROOMBA_BRC;
@@ -102,6 +122,7 @@ static void command_interpreter(void) {
 		}
 
 		cmd = get_rx_q_head();
+		// dbg_print_byte(cmd);
 		if (!(cmd & (1 << 7))) {
 			// This is a data command.
 			if (bt_rx_n == 0) {
@@ -127,10 +148,12 @@ static void command_interpreter(void) {
 					r_rot = data;
 					break;
 				case T_PAN:
-					t_pan = data;
+					if (data > 128) t_pan = 5;
+					else if (data < 128) t_pan = -5;
 					break;
 				case T_TILT:
-					t_tilt = data;
+					if (data > 128) t_tilt = 5;
+					else if (data < 128) t_tilt = -5;
 					break;
 				default:
 					// ERROR!
@@ -138,18 +161,19 @@ static void command_interpreter(void) {
 			}		
 		} else {
 			// This is a simple command.
-			// Send an ACK right away, in this thread.
-			usart_tx(cmd);
-			// Act on it.
+			// Send an ACK right away, then act on it.
 			if (cmd == L_ON) {
+				usart_tx(cmd);
 				PORTB |= LASER_PIN;
 			} else if (cmd == L_OFF) {
+				usart_tx(cmd);
 				PORTB &= ~(LASER_PIN);
 			} else if (cmd == R_STOP) {
-				r_vel = 0;
-				r_rot = 0;
+				usart_tx(cmd);
+				r_vel = 128;
+				r_rot = 128;
 			} else {
-				// ERROR!
+				// Probably a misinterpreted data byte, or just line noise.
 			}
 		}
 		// Don't call Task_Next here: there could be more input to read!
@@ -158,44 +182,53 @@ static void command_interpreter(void) {
 
 static void turret_controller(void) {
 	for(;;) {
-		// Thanks to how the PWM generator clock skew works, we are seeking
-		// to map pan and tilt inputs from [0, 255] to [250, 500].
-		// The easiest way to do this is to just add 248, since
-		// exceeding the limits slightly shouldn't harm the servos.
-		OCR1A = t_pan + 248;
-		OCR1B = t_tilt + 248;
+		// Pan is backwards: when t_pan is low, OCR1A must be increased.
+		if (t_pan < 0 && OCR1A < 500) {
+			OCR1A += 5;
+		} else if (t_pan > 0 && OCR1A > 250) {
+			OCR1A -= 5;
+		}
+		t_pan = 0;
+		if (t_tilt > 0 && OCR1B < 500) {
+			OCR1B += 5;
+		} else if (t_tilt < 0 && OCR1B > 250) {
+			OCR1B -= 5;
+		}
+		t_tilt = 0;
 		Task_Next();
 	}
+}
+
+// Borrowed from the Arduino library.
+long map(long x, long in_min, long in_max, long out_min, long out_max) {
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
 static void roomba_controller(void) {
 	int16_t radius, velocity;
 	uint8_t	oldr = 0, oldv = 0;
 	for(;;) { 
+		// TODO: If wall_detected, back up for N ticks.
 		while (r_rot == oldr && r_vel == oldv) 
 			// Only send a command when something changes.
 			Task_Next();
 
+		// TODO: Y U NO TURN
 		// Map rotation from [0, 255] to [-2000, 2000], reversed.
 		// (i.e. 255 -> 1, 0 -> -1, 130 -> 2000, 126 -> -2000, 128 -> 0).
-		if (r_rot > 129) {
-			radius = 2000 - ((r_rot - 128) << 4); // (127 << 4) = 2032.
-			if (radius < 0) radius = 1; // Thumbstick at extremity.
-		} else if (r_rot < 127){
-			radius = -(r_rot << 4); // (126 << 4) = 2016.
-			if (radius < -2000) radius = -2000; // Unlikely but possible.
-			else if (radius == 0) radius = -1; // Thumbstick at extremity.
-		} else { // r_rot == ~128
+		if (r_rot > 128) {
+			radius = map(r_rot, 128, 255, 2000, 1);
+		} else if (r_rot < 128){
+			radius = map(r_rot, 0, 128, -1, -2000);
+		} else { // r_rot == 128
 			radius = 0x7FFF; // Set radius to 32767 to drive straight.
 		}
 
 		// Map velocity from [0, 255] to [-500, 500].
-		if (r_vel > 129) {
-			velocity = (r_vel - 128) * 4;
-			if (velocity > 500) velocity = 500;
-		} else if (r_vel < 127) {
-			velocity = -r_vel * 4;
-			if (velocity < -500) velocity = -500;
+		if (r_vel > 128) {
+			velocity = map(r_vel, 128, 255, 0, 500);
+		} else if (r_vel < 128) {
+			velocity = map(r_vel, 0, 128, -500, 0);
 		} else { // r_vel == ~128
 			velocity = 0;
 		}
@@ -211,19 +244,41 @@ static void roomba_controller(void) {
 	}
 }
 
+BOOL wall_detected(void) {
+	roomba_write(142); // "Sensors" command
+	roomba_write(8); // Wall sensor
+	int value = roomba_read(); // TODO: Write roomba_read.
+	if (value) return TRUE;
+
+	roomba_write(142); // "Sensors" command
+	roomba_write(13); // Virtual wall sensor
+	value = roomba_read();
+	return value ? TRUE : FALSE;
+}
+
 void a_main(void) {
+	DDRB = 0; // Zero it initially; we'll use |= to set pins later.
+#ifndef NDEBUG
+	debug_init();
+	DEBUG("STARTING");
+#endif
 	usart_init();
 	servo_init();
 	roomba_init();
 	DDRB |= LASER_PIN;
 
-	Task_Create_Period(command_interpreter, 0, 10, 0, 1);
-	Task_Create_Period(turret_controller, 0, 10, 0, 4);
+	Task_Create_Period(command_interpreter, 0, 10, 1, 1);
+	Task_Create_Period(turret_controller, 0, 10, 1, 4);
 	Task_Create_Period(roomba_controller, 0, 10, 1, 7);
+	DEBUG("STARTED");
 }
 
 ISR(USART1_RX_vect) {
-	bt_rx_q[(bt_rx_head + bt_rx_n++) % RX_Q_SIZE] = UDR1;
+	uint8_t data = UDR1;
+	dbg_print_byte(data);
+
+	bt_rx_q[(bt_rx_head + bt_rx_n) % RX_Q_SIZE] = data;
+	bt_rx_n += 1;
 
 	if (bt_rx_n >= RX_Q_SIZE) {
 		// Error: Rx queue overflow!

@@ -5,8 +5,9 @@
 
 #include "os.h"
 #include "bluetooth_usart.h"
+#include "debug.h"
 
-// The size of the joystick deadzone. Numbers [0, 255], with 128 being the centre.
+// (Half) the size of the joystick deadzone, after scaling to range [0, 255].
 #define JS_DEADZONE 10
 
 // ADC pins thumbsticks ought to be plugged into.
@@ -81,6 +82,7 @@ static int sample_adc(uint8_t pin) {
  *******/
 static void bt_tx(void) {
 	for(;;) {
+		//PORTB ^= _BV(PB7);
 		while(bt_tx_n) {
 			usart_tx(bt_tx_q[bt_tx_head]);
 			bt_tx_head = (bt_tx_head + 1) % TX_Q_SIZE;
@@ -130,7 +132,7 @@ static void joystick_interpreter(void) {
 			moving = TRUE;
 			enqueue_data_command(R_ROT, (uint8_t)rot);
 		}
-		
+
 		if (moving) {
 			// Roomba is moving; now allowed to send another stop command.
 			roomba_state = ROOMBA_MOVING;
@@ -152,11 +154,13 @@ static void button_interpreter(void) {
 		if (laser_state == BTN_DOWN_AWAITING_ACK) {
 			// Retransmit L_ON.
 			enqueue_simple_command(L_ON);
+			DEBUG("RE-ON");
 			Task_Next();
 			continue;
 		} else if (laser_state == BTN_UP_AWAITING_ACK) {
 			// Retransmit L_OFF.
 			enqueue_simple_command(L_OFF);
+			DEBUG("RE-OFF");
 			Task_Next();
 			continue;
 		}
@@ -173,6 +177,7 @@ static void button_interpreter(void) {
 			// Button is down.
 			if (laser_state == BTN_UP_ACKED) {
 				// Send L_ON command.
+				DEBUG("ON");
 				laser_state = BTN_DOWN_AWAITING_ACK;
 				enqueue_simple_command(L_ON);
 			}
@@ -186,43 +191,53 @@ static void button_interpreter(void) {
  * it is the first system task run by the OS.
  */
 void a_main(void) {
+	DDRB = 0;
+	PORTB = 0;
 	usart_init();
 
-	DDRB &= ~(LASER_BUTTON); // Set laser pin as input.
+	DDRB &= ~_BV(DDB1); // Set pin 52 as input.
 	PORTB |= LASER_BUTTON;   // Activate the pull-up resistor.
 
-#ifndef NDEBUG
 	DDRB |= _BV(PB7); // PB7 is the built-in LED.
 	PORTB &= ~(_BV(PB7));
-#endif
 
 	Task_Create_Period(joystick_interpreter, 0, 10, 1, 1);
-	Task_Create_Period(button_interpreter, 0, 10, 0, 3);
+	Task_Create_Period(button_interpreter, 0, 10, 1, 3);
 	Task_Create_Period(bt_tx, 0, 10, 1, 6);
+	DEBUG("START");
 }
 
 ISR(USART1_RX_vect) {
+	PORTB |= _BV(PB7);
 	uint8_t data = UDR1;
 
+	DEBUG("Rx");
 	if (data == L_ON) {
+		//DEBUG("L_ON");
 		if (laser_state == BTN_DOWN_AWAITING_ACK) {
 			laser_state = BTN_DOWN_ACKED;
+			//DEBUG("ACK");
 		} else {
 			// Unexpected ACK. Possibly an error.
 		}
 	} else if (data == L_OFF) {
+		//DEBUG("L_OFF");
 		if (laser_state == BTN_UP_AWAITING_ACK) {
 			laser_state = BTN_UP_ACKED;
+			//DEBUG("ACK");
 		} else {
 			// Unexpected ACK. Error?
 		}
 	} else if (data == R_STOP) {
+		//DEBUG("R_STOP");
 		if (roomba_state == ROOMBA_STOPPING) {
 			roomba_state = ROOMBA_STOPPED;
+			//DEBUG("ACK");
 		} else {
 			// Unexpected ACK. Error?
 		}
-	}
-	// else: Unexpected message. Deffs an error.
+	} // else: Unexpected message. Deffs an error.
+
+	PORTB &= ~_BV(PB7);
 }
 
