@@ -182,16 +182,16 @@ static void command_interpreter(void) {
 
 static void turret_controller(void) {
 	for(;;) {
-		// Pan is backwards: when t_pan is low, OCR1A must be increased.
-		if (t_pan < 0 && OCR1A < 500) {
+		if (t_pan > 0 && OCR1A < 500) {
 			OCR1A += 5;
-		} else if (t_pan > 0 && OCR1A > 250) {
+		} else if (t_pan < 0 && OCR1A > 250) {
 			OCR1A -= 5;
 		}
 		t_pan = 0;
-		if (t_tilt > 0 && OCR1B < 500) {
+		// Tilt is backwards: when t_tilt is low, OCR1B must be increased.
+		if (t_tilt < 0 && OCR1B < 500) {
 			OCR1B += 5;
-		} else if (t_tilt < 0 && OCR1B > 250) {
+		} else if (t_tilt > 0 && OCR1B > 250) {
 			OCR1B -= 5;
 		}
 		t_tilt = 0;
