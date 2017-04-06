@@ -1,6 +1,9 @@
 #ifndef NDEBUG
 #include <avr/io.h>
 #include <stdio.h>
+
+#include "debug.h"
+
 char initialized;
 char buf[128];
 
@@ -27,5 +30,11 @@ void write_trace(char *M, char *file, int line) {
 		while(!(UCSR0A & _BV(UDRE0)));
 		UDR0 = *c++;
 	}
+}
+
+void dbg_print_value(uint16_t data, char *file, int line) {
+	char s[16];
+	sprintf(s, "%d", data);
+	write_trace(s, file, line);
 }
 #endif

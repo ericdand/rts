@@ -9,18 +9,6 @@
 #include "bluetooth_usart.h"
 
 #include "debug.h"
-#ifndef NDEBUG
-#include <stdio.h>
-#endif
-// Use the DEBUG(M) macro to write debug messages over the USB (baud 19200).
-// If NDEBUG is defined, no DEBUG messages will be compiled in.
-void dbg_print_byte(uint8_t data) {
-#ifndef NDEBUG
-	char s[16];
-	sprintf(s, "%d", data);
-#endif
-	DEBUG(s);
-}
 
 // Connect the Roomba BRC to pin 53, and the laser to pin 52.
 #define ROOMBA_BRC (1 << PB0)
@@ -62,14 +50,16 @@ static void servo_init(void) {
 
 // Connect the Roomba to USART2.
 static void roomba_write(uint8_t b) {
+	DEBUG_VALUE(b);
 	while(!(UCSR2A & _BV(UDRE2))); // Wait until ready.
 	UDR2 = b;
 }
 
 // Some Roomba commands.
-#define ROOMBA_START 128
-#define ROOMBA_SAFE  131
-#define ROOMBA_DRIVE 137
+#define ROOMBA_START   128
+#define ROOMBA_SAFE    131
+#define ROOMBA_DRIVE   137
+#define ROOMBA_SENSORS 142
 
 #define BAUD 19200
 #include <util/setbaud.h>
@@ -82,7 +72,7 @@ static void roomba_init(void) {
 #else
 	UCSR2A &= ~_BV(U2X2);
 #endif
-	UCSR2B = _BV(TXEN2); // Tx only.
+	UCSR2B = _BV(TXEN2) | _BV(RXEN2); // Tx and Rx, but no Rx interrupts.
 
 	DDRB |= _BV(DDB0);   // Enable pin 53 for output.
 	_delay_ms(100);
@@ -108,6 +98,36 @@ static void roomba_init(void) {
 	roomba_write(ROOMBA_SAFE);
 }
 
+static uint8_t roomba_read(void) {
+	unsigned int now = Now();
+	while (!(UCSR2A & (1<<RXC2)) && 
+			Now() < now+2); // Wait a max of 2 ticks. (20ms)
+	return UDR2;
+}
+
+static void roomba_drive(int16_t velocity, int16_t radius) {
+	// Allow using radius 0 as "do not turn".
+	if (radius == 0) radius = 0x7FFF;
+	roomba_write(ROOMBA_DRIVE);
+	roomba_write((uint8_t)(velocity >> 8));
+	roomba_write((uint8_t)velocity);
+	roomba_write((uint8_t)(radius >> 8));
+	roomba_write((uint8_t)radius);
+}
+
+static BOOL wall_detected(void) {
+	uint8_t value;
+	roomba_write(ROOMBA_SENSORS);
+	roomba_write(8); // Wall sensor
+	value = roomba_read();
+	if (value) return TRUE;
+
+	roomba_write(ROOMBA_SENSORS);
+	roomba_write(13); // Virtual wall sensor
+	value = roomba_read();
+	return value ? TRUE : FALSE;
+}
+
 /********
  * Tasks
  ********/
@@ -122,7 +142,7 @@ static void command_interpreter(void) {
 		}
 
 		cmd = get_rx_q_head();
-		// dbg_print_byte(cmd);
+		// DEBUG_VALUE(cmd);
 		if (!(cmd & (1 << 7))) {
 			// This is a data command.
 			if (bt_rx_n == 0) {
@@ -200,7 +220,7 @@ static void turret_controller(void) {
 }
 
 // Borrowed from the Arduino library.
-long map(long x, long in_min, long in_max, long out_min, long out_max) {
+static long map(long x, long in_min, long in_max, long out_min, long out_max) {
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
@@ -208,12 +228,20 @@ static void roomba_controller(void) {
 	int16_t radius, velocity;
 	uint8_t	oldr = 0, oldv = 0;
 	for(;;) { 
-		// TODO: If wall_detected, back up for N ticks.
-		while (r_rot == oldr && r_vel == oldv) 
+		if (wall_detected()) {
+			unsigned int now = Now();
+			roomba_drive(-300, 0); // Back up.
+			while(Now() < now + 500)
+				Task_Next(); // For 50 ticks. (0.5s)
+			continue;
+		}
+
+		if (r_rot == oldr && r_vel == oldv) {
 			// Only send a command when something changes.
 			Task_Next();
+			continue;
+		}
 
-		// TODO: Y U NO TURN
 		// Map rotation from [0, 255] to [-2000, 2000], reversed.
 		// (i.e. 255 -> 1, 0 -> -1, 130 -> 2000, 126 -> -2000, 128 -> 0).
 		if (r_rot > 128) {
@@ -223,37 +251,23 @@ static void roomba_controller(void) {
 		} else { // r_rot == 128
 			radius = 0x7FFF; // Set radius to 32767 to drive straight.
 		}
+		// DEBUG_VALUE(radius);
 
 		// Map velocity from [0, 255] to [-500, 500].
 		if (r_vel > 128) {
-			velocity = map(r_vel, 128, 255, 0, 500);
+			velocity = map(r_vel, 129, 255, 1, 500);
 		} else if (r_vel < 128) {
-			velocity = map(r_vel, 0, 128, -500, 0);
-		} else { // r_vel == ~128
+			velocity = map(r_vel, 0, 127, -500, -1);
+		} else { // r_vel == 128
 			velocity = 0;
 		}
+		// DEBUG_VALUE(velocity);
 
-		roomba_write(ROOMBA_DRIVE);
-		roomba_write((uint8_t)(velocity >> 8));
-		roomba_write((uint8_t)velocity);
-		roomba_write((uint8_t)(radius >> 8));
-		roomba_write((uint8_t)radius);
+		roomba_drive(velocity, radius);
 		oldr = r_rot;
 		oldv = r_vel;
 		Task_Next();
 	}
-}
-
-BOOL wall_detected(void) {
-	roomba_write(142); // "Sensors" command
-	roomba_write(8); // Wall sensor
-	int value = roomba_read(); // TODO: Write roomba_read.
-	if (value) return TRUE;
-
-	roomba_write(142); // "Sensors" command
-	roomba_write(13); // Virtual wall sensor
-	value = roomba_read();
-	return value ? TRUE : FALSE;
 }
 
 void a_main(void) {
@@ -275,7 +289,7 @@ void a_main(void) {
 
 ISR(USART1_RX_vect) {
 	uint8_t data = UDR1;
-	dbg_print_byte(data);
+	// DEBUG_VALUE(data);
 
 	bt_rx_q[(bt_rx_head + bt_rx_n) % RX_Q_SIZE] = data;
 	bt_rx_n += 1;
